@@ -7,9 +7,6 @@
       "description": "A schema for a BeginRendering message in the A2A streaming UI protocol. This message signals that the UI can now be rendered and provides initial root component and styling information.",
       "type": "object",
       "properties": {
-        "type": {
-          "const": "beginRendering"
-        },
         "root": {
           "type": "string",
           "description": "The ID of the root component from which rendering should begin. This is a reference to a component instance by its unique ID. This property is REQUIRED."
@@ -25,14 +22,11 @@
         "type"
       ]
     },
-    "componentUpdate": {
-      "title": "SurfaceUpdate Message",
+    "updateSurface": {
+      "title": "Update Surface Message",
       "description": "A schema for a SurfaceUpdate message in the A2A streaming UI protocol.",
       "type": "object",
       "properties": {
-        "type": {
-          "const": "componentUpdate"
-        },
         "surfaceId": {
           "type": "string",
           "description": "An ID for the surface that the UI changes should be applied to. If this surface doesn't exist, it will be created. If this is not specified, the default surface will be used."
@@ -71,9 +65,6 @@
       "description": "Sets or replaces the data model at a specified path with new content.",
       "type": "object",
       "properties": {
-        "type": {
-          "const": "dataModelUpdate"
-        },
         "path": {
           "type": "string",
           "description": "An optional path to a location within the data model where the content should be inserted or replaced. The path is represented as a dot-separated string and can include array indexing (e.g., 'user.addresses[0].street'). If this field is omitted, the entire data model will be replaced with the provided 'contents'."

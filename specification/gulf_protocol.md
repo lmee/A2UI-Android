@@ -52,12 +52,16 @@ The protocol is designed to be "LLM-friendly," meaning its structure is declarat
 
 Communication occurs via a JSON Lines (JSONL) stream. The client parses each line as a distinct message and incrementally builds the UI. The server-to-client protocol defines four message types:
 
-- `streamHeader`: Identifies the protocol version. This is always the first message.
-- `componentUpdate`: Provides a list of component definitions to be added to the client's component buffer.
-- `dataModelUpdate`: Provides new data to be inserted into or to replace the client's data model.
+- `updateSurface`: Provides a list of component definitions to be added to or updated in a specific UI area called a "surface."
+- `dataModelUpdate`: Provides new data to be inserted into or to replace the client's data model. All surfaces share the same data model.
 - `beginRendering`: Signals to the client that it has enough information to perform the initial render, specifying the ID of the root component.
+- `deleteSurface`: Explicitly removes a surface and its contents from the UI.
 
-Client-to-server communication for user interactions is handled separately via a `ClientEvent` message, sent as a JSON payload to a REST API. This keeps the primary data stream unidirectional.
+Client-to-server communication for user interactions is handled separately via a JSON payload sent to a REST API. This message can be one of several types:
+- `userAction`: Reports a user-initiated action from a component.
+- `clientCapabilities`: Informs the server about the client's capabilities, such as the component catalog it supports.
+- `error`: Reports a client-side error.
+This keeps the primary data stream unidirectional.
 
 ## Section 1: Foundational Architecture and Data Flow
 
@@ -75,21 +79,28 @@ The central philosophy of GULF is the decoupling of three key elements:
 
 All UI descriptions are transmitted from the server to the client as a stream of JSON objects, formatted as JSON Lines (JSONL). Each line is a separate, compact JSON object representing a single message. This allows the client to parse and process each part of the UI definition as it arrives, enabling progressive rendering.
 
-### 1.3. Data Flow Model
+### 1.3. Surfaces: Managing Multiple UI Regions
+
+A **Surface** is a contiguous portion of screen real estate into which a GULF UI can be rendered. The protocol introduces the concept of a `surfaceId` to uniquely identify and manage these areas. This allows a single GULF stream to control multiple, independent UI regions simultaneously. Each surface has a separate root component and a separate hierarchy of components. All surfaces share the same data model, to allow displaying the same data in different ways across multiple surfaces.
+
+For example, in a chat application, each AI-generated response could be rendered into a separate surface within the conversation history. A separate, persistent surface could be used for a side panel that displays related information.
+
+The `surfaceId` is used in `updateSurface` messages to direct component changes to the correct area, and the `deleteSurface` message allows for explicitly removing a surface and its contents from the UI.
+
+### 1.4. Data Flow Model
 
 The GULF protocol is composed of a server-to-client stream describing UI and individual events sent to the server. The client consumes the stream, builds the UI, and renders it. Communication occurs via a JSON Lines (JSONL) stream, typically transported over **Server-Sent Events (SSE)**.
 
 1.  **Server Stream:** The server begins sending the JSONL stream over an SSE connection.
 2.  **Client-Side Buffering:** The client receives messages and buffers them:
 
-    - `streamHeader`: The client validates the version.
-    - `componentUpdate`: Component definitions are stored in a `Map<String, Component>`.
+    - `updateSurface`: Component definitions are stored in a `Map<String, Component>`, organized by `surfaceId`. If a surface doesn't exist, it is created.
     - `dataModelUpdate`: The client's internal JSON data model is built or updated.
 
 3.  **Render Signal:** The server sends a `beginRendering` message with the `root` component's ID. This prevents a "flash of incomplete content." The client buffers incoming components and data but waits for this explicit signal before attempting the first render, ensuring the initial view is coherent.
 4.  **Client-Side Rendering:** The client, now in a "ready" state, starts at the `root` component. It recursively walks the component tree by looking up component IDs in its buffer. It resolves any data bindings against the data model and uses its `WidgetRegistry` to instantiate native widgets.
-5.  **User Interaction and Event Handling:** The user interacts with a rendered widget (e.g., taps a button). The client constructs a `ClientEvent` JSON payload, resolving any data bindings from the component's `action.context`. It sends this payload to a pre-configured REST API endpoint on the server via a `POST` request.
-6.  **Dynamic Updates:** The server processes the `ClientEvent`. If the UI needs to change in response, the server sends new `componentUpdate` and `dataModelUpdate` messages over the original SSE stream. As these arrive, the client updates its component buffer and data model, and the UI re-renders to reflect the changes.
+5.  **User Interaction and Event Handling:** The user interacts with a rendered widget (e.g., taps a button). The client constructs a `userAction` JSON payload, resolving any data bindings from the component's `action.context`. It sends this payload (as part of a larger client event message) to a pre-configured REST API endpoint on the server via a `POST` request.
+6.  **Dynamic Updates:** The server processes the `userAction`. If the UI needs to change in response, the server sends new `updateSurface` and `dataModelUpdate` messages over the original SSE stream. As these arrive, the client updates its component buffer and data model, and the UI re-renders to reflect the changes. The server can also send `deleteSurface` to remove a UI region.
 
 ```mermaid
 sequenceDiagram
@@ -99,60 +110,63 @@ sequenceDiagram
     Server->>+Client: SSE Connection (JSONL Stream)
     Client->>Client: 1. Parse JSONL message
     loop Until 'beginRendering'
-        Client->>Client: 2a. Process streamHeader (check version)
-        Client->>Client: 2b. Process componentUpdate (store in component map)
-        Client->>Client: 2c. Process dataModelUpdate (update data model)
+        Client->>Client: 2a. Process updateSurface (store components in map for surfaceId)
+        Client->>Client: 2b. Process dataModelUpdate (update data model)
     end
     Client->>Client: 3. Process beginRendering (rootId: 'root', isReady: true)
-    Note right of Client: 4. Triggers UI build
+    Note right of Client: 4. Triggers UI build for a surface
     Client->>Client: 5. Build widget tree from 'root'
     Client->>Client: 6. Resolve data bindings
     Client->>Client: 7. Look up widgets in WidgetRegistry
     Client-->>-Server: (UI is rendered)
 
     Note over Client: 8. User interacts with UI (e.g., clicks button)
-    Client->>Client: 9. Construct ClientEvent payload
-    Client->>+Server: 10. POST /event (ClientEvent JSON)
+    Client->>Client: 9. Construct userAction payload
+    Client->>+Server: 10. POST /event (Client Event JSON with userAction)
     Server-->>-Client: 11. HTTP 200 OK
 
     loop Dynamic Updates in Response to Event
-        Server->>+Client: componentUpdate or dataModelUpdate (via SSE)
-        Client->>Client: Update component map or data model
+        Server->>+Client: updateSurface, dataModelUpdate, or deleteSurface (via SSE)
+        Client->>Client: Update component map, data model, or remove surface
         Note right of Client: Triggers UI rebuild
         Client-->>-Server: (UI is updated)
     end
 ```
 
-### 1.4. Full Stream Example
+### 1.5. Full Stream Example
 
 The following is a complete, minimal example of a JSONL stream that renders a user profile card.
 
 ```jsonl
-{"streamHeader": {"version": "1.0.0"}}
-{"componentUpdate": {"components": [{"id": "root", "componentProperties": {"Column": {"children": {"explicitList": ["profile_card"]}}}}]}}
-{"componentUpdate": {"components": [{"id": "profile_card", "componentProperties": {"Card": {"child": "card_content"}}}]}}
-{"componentUpdate": {"components": [{"id": "card_content", "componentProperties": {"Column": {"children": {"explicitList": ["header_row", "bio_text"]}}}}]}}
-{"componentUpdate": {"components": [{"id": "header_row", "componentProperties": {"Row": {"alignment": "center", "children": {"explicitList": ["avatar", "name_column"]}}}}]}}
-{"componentUpdate": {"components": [{"id": "avatar", "componentProperties": {"Image": {"url": {"literalString": "[https://www.example.com/profile.jpg)"}}}}]}}
-{"componentUpdate": {"components": [{"id": "name_column", "componentProperties": {"Column": {"alignment": "start", "children": {"explicitList": ["name_text", "handle_text"]}}}}]}}
-{"componentUpdate": {"components": [{"id": "name_text", "componentProperties": {"Heading": {"level": "3", "text": {"literalString": "Flutter Fan"}}}}]}}
-{"componentUpdate": {"components": [{"id": "handle_text", "componentProperties": {"Text": {"text": {"literalString": "@flutterdev"}}}}]}}
-{"componentUpdate": {"components": [{"id": "bio_text", "componentProperties": {"Text": {"text": {"literalString": "Building beautiful apps from a single codebase."}}}}]}}
+{"updateSurface": {"components": [{"id": "root", "componentProperties": {"Column": {"children": {"explicitList": ["profile_card"]}}}}]}}
+{"updateSurface": {"components": [{"id": "profile_card", "componentProperties": {"Card": {"child": "card_content"}}}]}}
+{"updateSurface": {"components": [{"id": "card_content", "componentProperties": {"Column": {"children": {"explicitList": ["header_row", "bio_text"]}}}}]}}
+{"updateSurface": {"components": [{"id": "header_row", "componentProperties": {"Row": {"alignment": "center", "children": {"explicitList": ["avatar", "name_column"]}}}}]}}
+{"updateSurface": {"components": [{"id": "avatar", "componentProperties": {"Image": {"url": {"literalString": "[https://www.example.com/profile.jpg)"}}}}]}}
+{"updateSurface": {"components": [{"id": "name_column", "componentProperties": {"Column": {"alignment": "start", "children": {"explicitList": ["name_text", "handle_text"]}}}}]}}
+{"updateSurface": {"components": [{"id": "name_text", "componentProperties": {"Heading": {"level": "3", "text": {"literalString": "Flutter Fan"}}}}]}}
+{"updateSurface": {"components": [{"id": "handle_text", "componentProperties": {"Text": {"text": {"literalString": "@flutterdev"}}}}]}}
+{"updateSurface": {"components": [{"id": "bio_text", "componentProperties": {"Text": {"text": {"literalString": "Building beautiful apps from a single codebase."}}}}]}}
 {"dataModelUpdate": {"contents": {}}}
 {"beginRendering": {"root": "root"}}
 ```
 
 ## Section 2: The Component Model
 
-Unlike protocols with an explicit catalog, GULF relies on a **client-defined** `WidgetRegistry`. The set of available component types (e.g., `Row`, `Text`, `Card`) and their supported properties is defined by the native client application. The server must generate `componentUpdate` messages that conform to the component set expected by the client.
+GULF's component model is designed for flexibility, separating the protocol from the component set.
 
-### 2.1. The `componentUpdate` Message
+### 2.1. The Catalog: Defining Components
 
-This message is the primary way UI structure is defined. It contains a `components` array, which is a flat list of component instances.
+Unlike previous versions with a fixed component set, GULF now defines components in a separate **Catalog**. A catalog is a schema that defines the available component types (e.g., `Row`, `Text`) and their supported properties. This allows for different clients to support different sets of components, including custom ones. The server must generate `updateSurface` messages that conform to the component catalog understood by the client. Clients can inform the server of the catalog they support using the `clientCapabilities` message.
+
+### 2.2. The `updateSurface` Message
+
+This message is the primary way UI structure is defined. It contains a `components` array and targets a specific `surfaceId`.
 
 ```json
 {
-  "componentUpdate": {
+  "updateSurface": {
+    "surfaceId": "main_content_area",
     "components": [
       {
         "id": "unique-component-id",
@@ -172,7 +186,10 @@ This message is the primary way UI structure is defined. It contains a `componen
 }
 ```
 
-### 2.2. The Component Object
+- `surfaceId`: An optional string identifying the UI surface to update. If omitted, a default surface is used.
+- `components`: A required flat list of component instances.
+
+### 2.3. The Component Object
 
 Each object in the `components` array has the following structure:
 
@@ -180,9 +197,9 @@ Each object in the `components` array has the following structure:
 - `weight`: An optional number used by `Row` and `Column` containers to determine proportional sizing.
 - `componentProperties`: A required object that defines the component's type and properties.
 
-### 2.3.`componentProperties` (Discriminated Union)
+### 2.4.`componentProperties` (Generic Object)
 
-This object uses a "discriminated union" pattern. It **must** contain exactly one key, where the key is the string name of the component type (e.g., `"Text"`, `"Row"`, `"Button"`). The value of that key is an object containing the specific properties for that component.
+On the wire, this object is generic. Its structure is not defined by the core GULF protocol. Instead, its validation is based on the active **Catalog**. For a given component, it **must** contain exactly one key, where the key is the string name of the component type from the catalog (e.g., `"Text"`, `"Row"`). The value is an object containing the properties for that component, as defined in the catalog.
 
 **Example:** A `Text` component:
 
@@ -205,7 +222,7 @@ A `Button` component:
 }
 ```
 
-The full set of available component types and their properties is defined by the `gulf_schema.json`.
+The full set of available component types and their properties is defined by a **Catalog Schema**, not in the core protocol schema.
 
 ## Section 3: UI Composition
 
@@ -350,57 +367,39 @@ The client's interpreter is responsible for resolving these paths against the da
 
 ## Section 5: Event Handling
 
-While the server-to-client UI definition is a one-way stream (e.g., over SSE), user interactions are communicated back to the server using a separate, out-of-band mechanism. This is typically a standard REST API endpoint where the client sends a `POST` request.
+While the server-to-client UI definition is a one-way stream, user interactions and other client-side information are communicated back to the server using a separate, out-of-band mechanism. This is typically a standard REST API endpoint where the client sends a `POST` request with a single client event message.
 
-### 5.1. The `ClientEvent` Message
+### 5.1. The Client Event Message
 
-When a user interacts with a component (like a `Button`), the client is responsible for constructing and sending a `ClientEvent` message as a JSON payload to a pre-configured API endpoint.
+The client sends a single JSON object that acts as a wrapper. It must contain exactly one of the following keys: `userAction`, `clientCapabilities`, or `error`.
 
-The `ClientEvent` object has the following structure:
+### 5.2. The `userAction` Message
+
+This message is sent when the user interacts with a component that has an action defined. It is the primary mechanism for user-driven events.
+
+The `userAction` object has the following structure:
 
 - `actionName` (string, required): The name of the action, taken directly from the `action.action` property of the component (e.g., "submit_form").
 - `sourceComponentId` (string, required): The `id` of the component that triggered the event (e.g., "my_button").
 - `timestamp` (string, required): An ISO 8601 timestamp of when the event occurred (e.g., "2025-09-19T17:01:00Z").
 - `resolvedContext` (object, required): A JSON object containing the key-value pairs from the component's `action.context`, after resolving all `BoundValue`s against the data model.
 
-### 5.2. Resolving the `action.context`
+The process for resolving the `action.context` remains the same: the client iterates over the `context` array, resolves all literal or data-bound values, and constructs the `resolvedContext` object.
 
-The `action` property on components like `Button` (as defined in `gulf_schema.json`) contains an optional `context` array.
+### 5.3. The `clientCapabilities` Message
 
-```json
-"action": {
-  "description": "Represents a user-initiated action.",
-  "properties": {
-    "action": { "type": "string" },
-    "context": {
-      "type": "array",
-      "items": {
-        "properties": {
-          "key": { "type": "string" },
-          "value": {
-            "description": "A BoundValue (path or literal)"
-            ...
-          }
-        }
-      }
-    }
-  }
-}
-```
+This message is sent by the client to inform the server about its capabilities. This is crucial for supporting different component sets. The message must contain exactly one of the following properties:
 
-Before sending the `ClientEvent`, the client **must** iterate over this `context` array and build the `resolvedContext` object.
+- `catalogUri`: A URI pointing to a predefined component catalog schema that the client supports.
+- `dynamicCatalog`: An inline JSON object, conforming to the Catalog Schema, that defines the client's supported components. This is useful for development or for clients with highly custom component sets.
 
-1.  For each item in the `context` array:
-2.  Use the item's `key` as the key in the `resolvedContext` object.
-3.  Resolve the item's `value` (a `BoundValue`):
+### 5.4. The `error` Message
 
-    - If it's a `literalString`, `literalNumber`, etc., use that value directly.
-    - If it's a `path`, resolve that path against the current data model.
-    - If the path is invalid, the value should be `null`.
+This message provides a feedback mechanism for the server. It is sent when the client encounters an error, for instance, during UI rendering or data binding. The content of the object is flexible and can contain any relevant error information.
 
-### 5.3. Event Flow Example
+### 5.5. Event Flow Example (`userAction`)
 
-1.  **Component Definition** (from `componentUpdate`):
+1.  **Component Definition** (from `updateSurface`):
 
     ```json
     {
@@ -431,26 +430,24 @@ Before sending the `ClientEvent`, the client **must** iterate over this `context
     ```
 
 3.  **User Action:** The user taps the "submit_btn" button.
-4.  **Client-Side Resolution:** The client resolves the `action.context`:
-
-    - `userInput`: Resolves `form.textField` to `"User input text"`.
-    - `formId`: Resolves `literalString` to `"f-123"`.
-
+4.  **Client-Side Resolution:** The client resolves the `action.context`.
 5.  **Client-to-Server Request:** The client sends a `POST` request to `https://api.example.com/handle_event` with the following JSON body:
 
     ```json
     {
-      "actionName": "submit_form",
-      "sourceComponentId": "submit_btn",
-      "timestamp": "2025-09-19T17:05:00Z",
-      "resolvedContext": {
-        "userInput": "User input text",
-        "formId": "f-123"
+      "userAction": {
+        "actionName": "submit_form",
+        "sourceComponentId": "submit_btn",
+        "timestamp": "2025-09-19T17:05:00Z",
+        "resolvedContext": {
+          "userInput": "User input text",
+          "formId": "f-123"
+        }
       }
     }
     ```
 
-6.  **Server Response:** The server processes this event. If the UI needs to change as a result, the server sends new `componentUpdate` or `dataModelUpdate` messages over the **separate SSE stream**.
+6.  **Server Response:** The server processes this event. If the UI needs to change as a result, the server sends new `updateSurface` or `dataModelUpdate` messages over the **separate SSE stream**.
 
 ## Section 6: Client-Side Implementation
 
@@ -463,33 +460,22 @@ A robust client-side interpreter for GULF should be composed of several key comp
 - **Interpreter State:** A state machine to track if the client is ready to render (e.g., a `_isReadyToRender` boolean that is set to `true` by `beginRendering`).
 - **`**WidgetRegistry**`**:\*\*\*\* A developer-provided map (e.g., `Map<String, WidgetBuilder>`) that associates component type strings ("Row", "Text") with functions that build native widgets.
 - **Binding Resolver:** A utility that can take a `BoundValue` (e.g., `{ "path": "user.name" }`) and resolve it against the Data Model Store.
-- **Event Handler:** A function, exposed to the `WidgetRegistry`, that constructs and sends the `ClientEvent` message to the configured REST API endpoint.
+- **Surface Manager:** Logic to create, update, and delete UI surfaces based on `surfaceId`.
+- **Event Handler:** A function, exposed to the `WidgetRegistry`, that constructs and sends the client event message (e.g., `userAction`) to the configured REST API endpoint.
 
 ## Section 7: Complete GULF JSON Schema
 
-This section provides the formal, consolidated JSON Schema (`gulf_schema.json`) for a single message in the GULF JSONL stream. Each line in the stream must be a valid JSON object that conforms to this schema.
+This section provides the formal JSON Schema for a single server-to-client message in the GULF JSONL stream. Each line in the stream must be a valid JSON object that conforms to this schema. Note that the component set is not defined here, but in a separate Catalog schema.
 
 ```json
 {
-  "title": "A2A UI Protocol Message",
-  "description": "A single message in the A2A streaming UI protocol. Exactly ONE of the properties in this object must be set, corresponding to the specific message type.",
+  "title": "GULF Protocol Message",
+  "description": "A single message in the GULF streaming UI protocol. Exactly ONE of the properties in this object must be set, corresponding to the specific message type.",
   "type": "object",
   "properties": {
-    "streamHeader": {
-      "title": "StreamHeader Message",
-      "description": "A schema for a StreamHeader message in the A2A streaming UI protocol.",
-      "type": "object",
-      "properties": {
-        "version": {
-          "type": "string",
-          "description": "The version of the protocol. This property is REQUIRED."
-        }
-      },
-      "required": ["version"]
-    },
     "beginRendering": {
       "title": "BeginRendering Message",
-      "description": "A schema for a BeginRendering message in the A2A streaming UI protocol. This message signals that the UI can now be rendered and provides initial root component and styling information.",
+      "description": "A schema for a BeginRendering message in the GULF streaming UI protocol. This message signals that the UI can now be rendered and provides initial root component and styling information.",
       "type": "object",
       "properties": {
         "root": {
@@ -498,31 +484,23 @@ This section provides the formal, consolidated JSON Schema (`gulf_schema.json`) 
         },
         "styles": {
           "type": "object",
-          "description": "An object containing styling information for the UI.",
-          "properties": {
-            "font": {
-              "type": "string",
-              "description": "The primary font to be used throughout the UI."
-            },
-            "logoUrl": {
-              "type": "string",
-              "description": "A URL pointing to the logo image to be displayed."
-            },
-            "primaryColor": {
-              "type": "string",
-              "description": "The primary color for the UI, specified as a hexadecimal color code (e.g., '#00BFFF').",
-              "pattern": "^#[0-9a-fA-F]{6}$"
-            }
-          }
+          "description": "An object containing styling information for the UI, as defined by the active Catalog.",
+          "additionalProperties": true
         }
       },
-      "required": ["root"]
+      "required": [
+        "root"
+      ]
     },
-    "componentUpdate": {
-      "title": "ComponentUpdate Message",
-      "description": "A schema for a ComponentUpdate message in the A2A streaming UI protocol.",
+    "updateSurface": {
+      "title": "UpdateSurface Message",
+      "description": "A schema for a updateSurface message in the GULF streaming UI protocol.",
       "type": "object",
       "properties": {
+        "surfaceId": {
+          "type": "string",
+          "description": "An ID for the surface that the UI changes should be applied to. If this surface doesn't exist, it will be created. If this is not specified, the default surface will be used."
+        },
         "components": {
           "type": "array",
           "description": "A flat list of all component instances available for rendering. Components reference each other by ID. This property is REQUIRED.",
@@ -534,597 +512,22 @@ This section provides the formal, consolidated JSON Schema (`gulf_schema.json`) 
                 "type": "string",
                 "description": "A unique identifier for this component instance. This property is REQUIRED."
               },
-              "weight": {
-                "type": "number",
-                "description": "The proportional weight of this component within its container. This property may ONLY be used when the component is direct child of either a Row or a Column"
-              },
               "componentProperties": {
                 "type": "object",
-                "description": "Defines the properties for a specific component type. Exactly ONE of the properties in this object must be set.",
-                "properties": {
-                  "Heading": {
-                    "type": "object",
-                    "properties": {
-                      "text": {
-                        "type": "object",
-                        "properties": {
-                          "path": {
-                            "type": "string",
-                            "description": "A data binding reference to a location in the data model (e.g., '/user/name')."
-                          },
-                          "literalString": {
-                            "type": "string",
-                            "description": "A fixed, hardcoded string value."
-                          }
-                        }
-                      },
-                      "level": {
-                        "type": "string",
-                        "enum": ["1", "2", "3", "4", "5"],
-                        "description": "The semantic importance level."
-                      }
-                    },
-                    "required": ["text"]
-                  },
-                  "Text": {
-                    "type": "object",
-                    "properties": {
-                      "text": {
-                        "type": "object",
-                        "properties": {
-                          "path": {
-                            "type": "string",
-                            "description": "A data binding reference to a location in the data model (e.g., '/user/name')."
-                          },
-                          "literalString": {
-                            "type": "string",
-                            "description": "A fixed, hardcoded string value."
-                          }
-                        }
-                      }
-                    },
-                    "required": ["text"]
-                  },
-                  "Image": {
-                    "type": "object",
-                    "properties": {
-                      "url": {
-                        "type": "object",
-                        "properties": {
-                          "path": {
-                            "type": "string",
-                            "description": "A data binding reference to a location in the data model (e.g., '/user/name')."
-                          },
-                          "literalString": {
-                            "type": "string",
-                            "description": "A fixed, hardcoded string value."
-                          }
-                        }
-                      }
-                    },
-                    "required": ["url"]
-                  },
-                  "Video": {
-                    "type": "object",
-                    "properties": {
-                      "url": {
-                        "type": "object",
-                        "properties": {
-                          "path": {
-                            "type": "string",
-                            "description": "A data binding reference to a location in the data model (e.g., '/user/name')."
-                          },
-                          "literalString": {
-                            "type": "string",
-                            "description": "A fixed, hardcoded string value."
-                          }
-                        }
-                      }
-                    },
-                    "required": ["url"]
-                  },
-                  "AudioPlayer": {
-                    "type": "object",
-                    "properties": {
-                      "url": {
-                        "type": "object",
-                        "properties": {
-                          "path": {
-                            "type": "string",
-                            "description": "A data binding reference to a location in the data model (e.g., '/user/name')."
-                          },
-                          "literalString": {
-                            "type": "string",
-                            "description": "A fixed, hardcoded string value."
-                          }
-                        }
-                      },
-                      "description": {
-                        "type": "object",
-                        "properties": {
-                          "path": {
-                            "type": "string",
-                            "description": "A data binding reference to a location in the data model (e.g., '/user/name')."
-                          },
-                          "literalString": {
-                            "type": "string",
-                            "description": "A fixed, hardcoded string value."
-                          }
-                        },
-                        "description": "A label, title, or placeholder text."
-                      }
-                    },
-                    "required": ["url"]
-                  },
-                  "Row": {
-                    "type": "object",
-                    "properties": {
-                      "children": {
-                        "type": "object",
-                        "description": "Defines the children of the container. You MUST define EITHER 'explicitList' OR 'template', but not both.",
-                        "properties": {
-                          "explicitList": {
-                            "type": "array",
-                            "description": "An explicit list of component instance IDs.",
-                            "items": {
-                              "type": "string",
-                              "description": "A reference to a component instance by its unique ID."
-                            }
-                          },
-                          "template": {
-                            "type": "object",
-                            "description": "A template to be rendered for each item in a data-bound list.",
-                            "properties": {
-                              "componentId": {
-                                "type": "string",
-                                "description": "The ID of the component (from the main 'components' list) to use as a template for each item."
-                              },
-                              "dataBinding": {
-                                "type": "string",
-                                "description": "A data binding reference to a list within the data model (e.g., '/user/posts')."
-                              }
-                            },
-                            "required": ["componentId", "dataBinding"]
-                          }
-                        }
-                      },
-                      "distribution": {
-                        "type": "string",
-                        "enum": [
-                          "start",
-                          "center",
-                          "end",
-                          "spaceBetween",
-                          "spaceAround",
-                          "spaceEvenly"
-                        ],
-                        "description": "Distribution of items along the main axis."
-                      },
-                      "alignment": {
-                        "type": "string",
-                        "enum": ["start", "center", "end", "stretch"],
-                        "description": "Alignment of items/child along the cross axis."
-                      }
-                    },
-                    "required": ["children"]
-                  },
-                  "Column": {
-                    "type": "object",
-                    "properties": {
-                      "children": {
-                        "type": "object",
-                        "description": "Defines the children of the container. You MUST define EITHER 'explicitList' OR 'template', but not both.",
-                        "properties": {
-                          "explicitList": {
-                            "type": "array",
-                            "description": "An explicit list of component instance IDs.",
-                            "items": {
-                              "type": "string",
-                              "description": "A reference to a component instance by its unique ID."
-                            }
-                          },
-                          "template": {
-                            "type": "object",
-                            "description": "A template to be rendered for each item in a data-bound list.",
-                            "properties": {
-                              "componentId": {
-                                "type": "string",
-                                "description": "The ID of the component (from the main 'components' list) to use as a template for each item."
-                              },
-                              "dataBinding": {
-                                "type": "string",
-                                "description": "A data binding reference to a list within the data model (e.g., '/user/posts')."
-                              }
-                            },
-                            "required": ["componentId", "dataBinding"]
-                          }
-                        }
-                      },
-                      "distribution": {
-                        "type": "string",
-                        "enum": [
-                          "start",
-                          "center",
-                          "end",
-                          "spaceBetween",
-                          "spaceAround",
-                          "spaceEvenly"
-                        ],
-                        "description": "Distribution of items along the main axis."
-                      },
-                      "alignment": {
-                        "type": "string",
-                        "enum": ["start", "center", "end", "stretch"],
-                        "description": "Alignment of items/child along the cross axis."
-                      }
-                    },
-                    "required": ["children"]
-                  },
-                  "List": {
-                    "type": "object",
-                    "properties": {
-                      "children": {
-                        "type": "object",
-                        "description": "Defines the children of the container. You MUST define EITHER 'explicitList' OR 'template', but not both.",
-                        "properties": {
-                          "explicitList": {
-                            "type": "array",
-                            "description": "An explicit list of component instance IDs.",
-                            "items": {
-                              "type": "string",
-                              "description": "A reference to a component instance by its unique ID."
-                            }
-                          },
-                          "template": {
-                            "type": "object",
-                            "description": "A template to be rendered for each item in a data-bound list.",
-                            "properties": {
-                              "componentId": {
-                                "type": "string",
-                                "description": "The ID of the component (from the main 'components' list) to use as a template for each item."
-                              },
-                              "dataBinding": {
-                                "type": "string",
-                                "description": "A data binding reference to a list within the data model (e.g., '/user/posts')."
-                              }
-                            },
-                            "required": ["componentId", "dataBinding"]
-                          }
-                        }
-                      },
-                      "direction": {
-                        "type": "string",
-                        "enum": ["vertical", "horizontal"],
-                        "default": "vertical",
-                        "description": "The direction of the list."
-                      },
-                      "alignment": {
-                        "type": "string",
-                        "enum": ["start", "center", "end", "stretch"],
-                        "description": "Alignment of items/child along the cross axis."
-                      }
-                    },
-                    "required": ["children"]
-                  },
-                  "Card": {
-                    "type": "object",
-                    "properties": {
-                      "child": {
-                        "type": "string",
-                        "description": "A reference to a single component instance by its unique ID."
-                      }
-                    },
-                    "required": ["child"]
-                  },
-                  "Tabs": {
-                    "type": "object",
-                    "properties": {
-                      "tabItems": {
-                        "type": "array",
-                        "description": "A list of tabs, each with a title and a child component ID.",
-                        "items": {
-                          "type": "object",
-                          "properties": {
-                            "title": {
-                              "type": "object",
-                              "properties": {
-                                "path": {
-                                  "type": "string",
-                                  "description": "A data binding reference to a location in the data model (e.g., '/user/name')."
-                                },
-                                "literalString": {
-                                  "type": "string",
-                                  "description": "A fixed, hardcoded string value."
-                                }
-                              },
-                              "description": "The title of the tab."
-                            },
-                            "child": {
-                              "type": "string",
-                              "description": "A reference to a component instance by its unique ID."
-                            }
-                          },
-                          "required": ["title", "child"]
-                        }
-                      }
-                    },
-                    "required": ["tabItems"]
-                  },
-                  "Divider": {
-                    "type": "object",
-                    "properties": {
-                      "axis": {
-                        "type": "string",
-                        "enum": ["horizontal", "vertical"],
-                        "default": "horizontal",
-                        "description": "The orientation."
-                      }
-                    }
-                  },
-                  "Modal": {
-                    "type": "object",
-                    "properties": {
-                      "entryPointChild": {
-                        "type": "string",
-                        "description": "The ID of the component (e.g., a button) that triggers the modal."
-                      },
-                      "contentChild": {
-                        "type": "string",
-                        "description": "The ID of the component to display as the modal's content."
-                      }
-                    },
-                    "required": ["entryPointChild", "contentChild"]
-                  },
-                  "Button": {
-                    "type": "object",
-                    "properties": {
-                      "label": {
-                        "type": "object",
-                        "properties": {
-                          "path": {
-                            "type": "string",
-                            "description": "A data binding reference to a location in the data model (e.g., '/user/name')."
-                          },
-                          "literalString": {
-                            "type": "string",
-                            "description": "A fixed, hardcoded string value."
-                          }
-                        }
-                      },
-                      "action": {
-                        "type": "object",
-                        "description": "Represents a user-initiated action.",
-                        "properties": {
-                          "action": {
-                            "type": "string",
-                            "description": "A unique name identifying the action (e.g., 'submitForm')."
-                          },
-                          "context": {
-                            "type": "array",
-                            "description": "A key-value map of data bindings to be resolved when the action is triggered.",
-                            "items": {
-                              "type": "object",
-                              "properties": {
-                                "key": {
-                                  "type": "string"
-                                },
-                                "value": {
-                                  "type": "object",
-                                  "description": "The dynamic value. Define EXACTLY ONE of the nested properties.",
-                                  "properties": {
-                                    "path": {
-                                      "type": "string",
-                                      "description": "A data binding reference to a location in the data model (e.g., '/user/name')."
-                                    },
-                                    "literalString": {
-                                      "type": "string",
-                                      "description": "A fixed, hardcoded string value."
-                                    },
-                                    "literalNumber": {
-                                      "type": "number"
-                                    },
-                                    "literalBoolean": {
-                                      "type": "boolean"
-                                    }
-                                  }
-                                }
-                              },
-                              "required": ["key", "value"]
-                            }
-                          }
-                        },
-                        "required": ["action"]
-                      }
-                    },
-                    "required": ["label", "action"]
-                  },
-                  "CheckBox": {
-                    "type": "object",
-                    "properties": {
-                      "label": {
-                        "type": "object",
-                        "properties": {
-                          "path": {
-                            "type": "string",
-                            "description": "A data binding reference to a location in the data model (e.g., '/user/name')."
-                          },
-                          "literalString": {
-                            "type": "string",
-                            "description": "A fixed, hardcoded string value."
-                          }
-                        }
-                      },
-                      "value": {
-                        "type": "object",
-                        "properties": {
-                          "path": {
-                            "type": "string",
-                            "description": "A data binding reference to a location in the data model (e.g., '/user/name')."
-                          },
-                          "literalBoolean": {
-                            "type": "boolean"
-                          }
-                        }
-                      }
-                    },
-                    "required": ["label", "value"]
-                  },
-                  "TextField": {
-                    "type": "object",
-                    "properties": {
-                      "text": {
-                        "type": "object",
-                        "properties": {
-                          "path": {
-                            "type": "string",
-                            "description": "A data binding reference to a location in the data model (e.g., '/user/name')."
-                          },
-                          "literalString": {
-                            "type": "string",
-                            "description": "A fixed, hardcoded string value."
-                          }
-                        }
-                      },
-                      "label": {
-                        "type": "object",
-                        "properties": {
-                          "path": {
-                            "type": "string",
-                            "description": "A data binding reference to a location in the data model (e.g., '/user/name')."
-                          },
-                          "literalString": {
-                            "type": "string",
-                            "description": "A fixed, hardcoded string value."
-                          }
-                        },
-                        "description": "A label, title, or placeholder text."
-                      },
-                      "type": {
-                        "type": "string",
-                        "enum": ["shortText", "number", "date", "longText"]
-                      },
-                      "validationRegexp": {
-                        "type": "string",
-                        "description": "A regex string to validate the input."
-                      }
-                    },
-                    "required": ["label"]
-                  },
-                  "DateTimeInput": {
-                    "type": "object",
-                    "properties": {
-                      "value": {
-                        "type": "object",
-                        "properties": {
-                          "path": {
-                            "type": "string",
-                            "description": "A data binding reference to a location in the data model (e.g., '/user/name')."
-                          },
-                          "literalString": {
-                            "type": "string",
-                            "description": "A fixed, hardcoded string value."
-                          }
-                        }
-                      },
-                      "enableDate": {
-                        "type": "boolean",
-                        "default": true
-                      },
-                      "enableTime": {
-                        "type": "boolean",
-                        "default": false
-                      },
-                      "outputFormat": {
-                        "type": "string",
-                        "description": "The string format for the output (e.g., 'YYYY-MM-DD')."
-                      }
-                    },
-                    "required": ["value"]
-                  },
-                  "MultipleChoice": {
-                    "type": "object",
-                    "properties": {
-                      "selections": {
-                        "type": "object",
-                        "properties": {
-                          "path": {
-                            "type": "string",
-                            "description": "A data binding reference to a location in the data model (e.g., '/user/name')."
-                          },
-                          "literalArray": {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        }
-                      },
-                      "options": {
-                        "type": "array",
-                        "items": {
-                          "type": "object",
-                          "properties": {
-                            "label": {
-                              "type": "object",
-                              "properties": {
-                                "path": {
-                                  "type": "string",
-                                  "description": "A data binding reference to a location in the data model (e.g., '/user/name')."
-                                },
-                                "literalString": {
-                                  "type": "string",
-                                  "description": "A fixed, hardcoded string value."
-                                }
-                              }
-                            },
-                            "value": {
-                              "type": "string"
-                            }
-                          },
-                          "required": ["label", "value"]
-                        }
-                      },
-                      "maxAllowedSelections": {
-                        "type": "integer",
-                        "default": 1
-                      }
-                    },
-                    "required": ["selections"]
-                  },
-                  "Slider": {
-                    "type": "object",
-                    "properties": {
-                      "value": {
-                        "type": "object",
-                        "properties": {
-                          "path": {
-                            "type": "string",
-                            "description": "A data binding reference to a location in the data model (e.g., '/user/name')."
-                          },
-                          "literalNumber": {
-                            "type": "number"
-                          }
-                        }
-                      },
-                      "minValue": {
-                        "type": "number",
-                        "default": 0
-                      },
-                      "maxValue": {
-                        "type": "number",
-                        "default": 100
-                      }
-                    },
-                    "required": ["value"]
-                  }
-                }
+                "description": "Defines the properties for the component type, according to the active Catalog.",
+                "additionalProperties": true
               }
             },
-            "required": ["id", "componentProperties"]
+            "required": [
+              "id",
+              "componentProperties"
+            ]
           }
         }
       },
-      "required": ["components"]
+      "required": [
+        "components"
+      ]
     },
     "dataModelUpdate": {
       "title": "Data model update",
@@ -1139,7 +542,23 @@ This section provides the formal, consolidated JSON Schema (`gulf_schema.json`) 
           "description": "The JSON content to be placed at the specified path. This property is REQUIRED. This can be any valid JSON value (object, array, string, number, boolean, or null). The content at the target path will be completely replaced by this new value."
         }
       },
-      "required": ["contents"]
+      "required": [
+        "contents"
+      ]
+    },
+    "deleteSurface": {
+      "title": "DeleteSurface Message",
+      "description": "A schema for a DeleteSurface message in the GULF streaming UI protocol. This message signals that a surface should be removed from the UI.",
+      "type": "object",
+      "properties": {
+        "surfaceId": {
+          "type": "string",
+          "description": "The ID of the surface to be deleted. This property is REQUIRED."
+        }
+      },
+      "required": [
+        "surfaceId"
+      ]
     }
   }
 }
