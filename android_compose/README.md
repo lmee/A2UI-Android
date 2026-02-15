@@ -90,7 +90,7 @@ A2UI Android Compose Renderer 是 A2UI 协议在 Android 平台上的完整实�
 ### 项目结构
 
 ```
-compose/
+android_compose/
 ├── src/
 │   ├── main/
 │   │   ├── java/org/a2ui/compose/

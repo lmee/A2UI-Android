@@ -63,17 +63,17 @@ Add the compose module to your project:
 
 ```kotlin
 // settings.gradle.kts
-include(":compose")
+include(":android_compose")
 
 // build.gradle.kts
 dependencies {
-    implementation(project(":compose"))
+    implementation(project(":android_compose"))
 }
 ```
 
 ### 📖 Full Documentation
 
-See [compose/README.md](compose/README.md) for complete documentation including:
+See [android_compose/README.md](android_compose/README.md) for complete documentation including:
 - Architecture overview
 - Component reference
 - Theme customization
@@ -98,7 +98,7 @@ A2UI is an open standard and set of libraries that allows agents to "speak UI." 
 
 | Platform | Status | Location |
 |----------|--------|----------|
-| **Android (Compose)** | ✅ Complete | [compose/](compose/) |
+| **Android (Compose)** | ✅ Complete | [android_compose/](android_compose/) |
 | **Web (Lit)** | ✅ Available | renderers/lit/ |
 | **Flutter** | ✅ Available | [GenUI SDK](https://github.com/flutter/genui) |
 | **React** | 🔜 Planned | - |
@@ -177,7 +177,7 @@ cd ../../samples/client/lit/shell && npm install && npm run dev
 
 ```
 A2UI/
-├── compose/                    # 🆕 Android Compose Renderer
+├── android_compose/            # 🆕 Android Compose Renderer
 │   ├── src/main/java/org/a2ui/compose/
 │   │   ├── data/              # Data model & processing
 │   │   ├── rendering/         # Core renderer & components
@@ -280,10 +280,10 @@ git clone https://github.com/lmee/A2UI-Android.git
 cd A2UI-Android
 
 # Run tests
-./gradlew :compose:test
+./gradlew :android_compose:test
 
 # Build
-./gradlew :compose:build
+./gradlew :android_compose:build
 ```
 
 ---
@@ -296,7 +296,7 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENS
 
 ## 🔗 Links
 
-- **Android Compose Renderer**: [compose/README.md](compose/README.md)
+- **Android Compose Renderer**: [android_compose/README.md](android_compose/README.md)
 - **A2UI Specification**: [specification/](specification/)
 - **GenUI SDK (Flutter)**: https://github.com/flutter/genui
 - **CopilotKit Widget Builder**: https://go.copilotkit.ai/A2UI-widget-builder
