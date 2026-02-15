@@ -1,6 +1,6 @@
 # A2UI Android Compose Renderer
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Kotlin](https://img.shields.io/badge/Kotlin-1.9.22-blue.svg)](https://kotlinlang.org)
 [![API](https://img.shields.io/badge/API-21%2B-brightgreen.svg)](https://android-arsenal.com/api?level=21)
 
@@ -905,10 +905,4 @@ val renderer = A2UIRenderer(logger = logger)
 
 ## 许可证
 
-本项目采用 MIT 许可证 - 详见 [LICENSE](../LICENSE) 文件。
-
----
-
-**维护者**: A2UI Team  
-**最后更新**: 2024年1月  
-**版本**: 1.0.0
+本项目采用 Apache 2.0 许可证 - 详见 [LICENSE](../LICENSE) 文件。
