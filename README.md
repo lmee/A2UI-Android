@@ -4,6 +4,8 @@
 [![Android](https://img.shields.io/badge/Platform-Android-green.svg)](https://developer.android.com)
 [![Kotlin](https://img.shields.io/badge/Kotlin-1.9.22-blue.svg)](https://kotlinlang.org)
 
+> **Note**: This is a fork of [google/A2UI](https://github.com/google/A2UI) with an added **Android Jetpack Compose Renderer** implementation.
+
 A2UI is an open-source project that allows agents to generate or populate rich user interfaces. This repository includes a **complete Android Jetpack Compose renderer implementation**.
 
 <img src="docs/assets/a2ui_gallery_examples.png" alt="Gallery of A2UI components" height="400">

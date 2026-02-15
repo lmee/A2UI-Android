@@ -4,7 +4,7 @@
 [![Kotlin](https://img.shields.io/badge/Kotlin-1.9.22-blue.svg)](https://kotlinlang.org)
 [![API](https://img.shields.io/badge/API-21%2B-brightgreen.svg)](https://android-arsenal.com/api?level=21)
 
-一个功能完整的 Android Jetpack Compose 实现的 A2UI (Agent to UI) 协议渲染器，允许 Android 应用程序动态渲染由 A2UI 后端代理生成的用户界面。
+> **基于 [A2UI 协议](https://github.com/google/A2UI)** - 一个功能完整的 Android Jetpack Compose 实现的 A2UI (Agent to UI) 协议渲染器，允许 Android 应用程序动态渲染由 A2UI 后端代理生成的用户界面。
 
 ## 📖 目录
 
