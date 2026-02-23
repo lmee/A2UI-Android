@@ -83,7 +83,10 @@ class DefaultErrorHandler : A2UIErrorHandler {
     private fun getRecoveryAction(error: A2UIError): (() -> Unit)? {
         return when (error) {
             is A2UIError.NetworkError -> {
-                { /* Retry network request */ }
+                // Recovery requires a transport reference; callers must provide retry logic
+                // via A2UIRenderer.setActionHandler(). Returning null prevents a non-functional
+                // Retry button from appearing in the error UI.
+                null
             }
             else -> null
         }

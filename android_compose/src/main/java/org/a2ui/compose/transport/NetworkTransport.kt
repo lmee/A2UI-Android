@@ -8,11 +8,24 @@ import okhttp3.sse.EventSourceListener
 import okhttp3.sse.EventSources
 import java.util.concurrent.TimeUnit
 
+/**
+ * WebSocket 传输层实现，支持双向通信
+ *
+ * 特性：
+ * - 自动重连机制（可配置）
+ * - 心跳检测（30 秒间隔）
+ * - 资源自动清理（实现 AutoCloseable）
+ * - 防止内存泄漏
+ *
+ * @param url WebSocket 服务器地址
+ * @param reconnectEnabled 是否启用自动重连
+ * @param reconnectDelayMs 重连延迟（毫秒）
+ */
 class WebSocketTransport(
     private val url: String,
     private val reconnectEnabled: Boolean = true,
     private val reconnectDelayMs: Long = 3000
-) : A2UITransport {
+) : A2UITransport, AutoCloseable {
 
     private val _state = MutableStateFlow<TransportState>(TransportState.Disconnected)
     override val state: Flow<TransportState> = _state.asStateFlow()
@@ -30,7 +43,16 @@ class WebSocketTransport(
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var reconnectJob: Job? = null
 
+    // ✅ 添加状态标志，防止关闭后继续使用
+    @Volatile
+    private var isClosed = false
+
     override suspend fun connect() {
+        // ✅ 检查是否已关闭
+        if (isClosed) {
+            throw IllegalStateException("Transport is closed and cannot be reconnected")
+        }
+
         _state.value = TransportState.Connecting
 
         try {
@@ -99,24 +121,88 @@ class WebSocketTransport(
     }
 
     override suspend fun send(message: String) {
+        // ✅ 检查是否已关闭
+        if (isClosed) {
+            throw IllegalStateException("Transport is closed")
+        }
+
         if (_state.value != TransportState.Connected) {
             throw IllegalStateException("WebSocket is not connected")
         }
         webSocket?.send(message)
     }
 
+    /**
+     * 释放所有资源（已废弃，请使用 close()）
+     */
+    @Deprecated(
+        message = "Use close() instead",
+        replaceWith = ReplaceWith("close()"),
+        level = DeprecationLevel.WARNING
+    )
     fun dispose() {
+        close()
+    }
+
+    /**
+     * 关闭传输层并释放所有资源
+     *
+     * 此方法是幂等的，可以安全地多次调用
+     */
+    override fun close() {
+        if (isClosed) return
+
+        isClosed = true
+
+        // 1. 取消所有协程任务
         reconnectJob?.cancel()
         scope.cancel()
-        client.dispatcher.executorService.shutdown()
+
+        // 2. 关闭 WebSocket 连接
+        webSocket?.close(1000, "Transport closed")
+        webSocket = null
+
+        // 3. 关闭 OkHttp 客户端资源
+        try {
+            client.dispatcher.executorService.shutdown()
+            client.connectionPool.evictAll()
+        } catch (e: Exception) {
+            // 忽略关闭时的异常
+        }
+
+        // 4. 更新状态
+        _state.value = TransportState.Disconnected
+    }
+
+    /**
+     * 析构函数保护，防止忘记调用 close()
+     */
+    @Suppress("DEPRECATION")
+    protected fun finalize() {
+        if (!isClosed) {
+            close()
+        }
     }
 }
 
+/**
+ * Server-Sent Events (SSE) 传输层实现，支持单向接收
+ *
+ * 特性：
+ * - 只读传输（不支持发送消息）
+ * - 自动重连机制（可配置）
+ * - 资源自动清理（实现 AutoCloseable）
+ * - 防止内存泄漏
+ *
+ * @param url SSE 服务器地址
+ * @param reconnectEnabled 是否启用自动重连
+ * @param reconnectDelayMs 重连延迟（毫秒）
+ */
 class SSETransport(
     private val url: String,
     private val reconnectEnabled: Boolean = true,
     private val reconnectDelayMs: Long = 3000
-) : A2UITransport {
+) : A2UITransport, AutoCloseable {
 
     private val _state = MutableStateFlow<TransportState>(TransportState.Disconnected)
     override val state: Flow<TransportState> = _state.asStateFlow()
@@ -133,7 +219,16 @@ class SSETransport(
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var reconnectJob: Job? = null
 
+    // ✅ 添加状态标志，防止关闭后继续使用
+    @Volatile
+    private var isClosed = false
+
     override suspend fun connect() {
+        // ✅ 检查是否已关闭
+        if (isClosed) {
+            throw IllegalStateException("Transport is closed and cannot be reconnected")
+        }
+
         _state.value = TransportState.Connecting
         connectSSE()
     }
@@ -207,9 +302,55 @@ class SSETransport(
         throw UnsupportedOperationException("SSE is a read-only transport. Use a separate transport for sending messages.")
     }
 
+    /**
+     * 释放所有资源（已废弃，请使用 close()）
+     */
+    @Deprecated(
+        message = "Use close() instead",
+        replaceWith = ReplaceWith("close()"),
+        level = DeprecationLevel.WARNING
+    )
     fun dispose() {
+        close()
+    }
+
+    /**
+     * 关闭传输层并释放所有资源
+     *
+     * 此方法是幂等的，可以安全地多次调用
+     */
+    override fun close() {
+        if (isClosed) return
+
+        isClosed = true
+
+        // 1. 取消所有协程任务
         reconnectJob?.cancel()
         scope.cancel()
-        client.dispatcher.executorService.shutdown()
+
+        // 2. 关闭 EventSource 连接
+        eventSource?.cancel()
+        eventSource = null
+
+        // 3. 关闭 OkHttp 客户端资源
+        try {
+            client.dispatcher.executorService.shutdown()
+            client.connectionPool.evictAll()
+        } catch (e: Exception) {
+            // 忽略关闭时的异常
+        }
+
+        // 4. 更新状态
+        _state.value = TransportState.Disconnected
+    }
+
+    /**
+     * 析构函数保护，防止忘记调用 close()
+     */
+    @Suppress("DEPRECATION")
+    protected fun finalize() {
+        if (!isClosed) {
+            close()
+        }
     }
 }

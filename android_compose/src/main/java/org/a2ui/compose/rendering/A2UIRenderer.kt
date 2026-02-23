@@ -67,6 +67,12 @@ class A2UIRenderer(
                 return Result.failure(IllegalArgumentException("Message cannot be empty"))
             }
 
+            if (message.length > MAX_MESSAGE_SIZE) {
+                val error = A2UIError.ParseError("Message too large: ${message.length} bytes")
+                handleError(error, "unknown")
+                return Result.failure(IllegalArgumentException("Message exceeds size limit"))
+            }
+
             val surfaceId = getSurfaceId(message)
             val a2uiMessage = try {
                 json.decodeFromString<A2UIMessage>(message)
@@ -138,6 +144,10 @@ class A2UIRenderer(
 
     private fun handleCreateSurface(createSurface: CreateSurface) {
         logger.log(A2UILogLevel.INFO, "Creating surface: ${createSurface.surfaceId}")
+        if (surfaces.size >= MAX_SURFACES) {
+            logger.log(A2UILogLevel.WARN, "Surface limit reached: ${surfaces.size}")
+            throw IllegalStateException("Maximum surface count ($MAX_SURFACES) exceeded")
+        }
         val surfaceId = createSurface.surfaceId
         dataModelProcessor.createSurface(surfaceId)
         surfaces[surfaceId] = SurfaceContext(
@@ -157,6 +167,12 @@ class A2UIRenderer(
         val componentMap = surfaceComponents[surfaceId] ?: run {
             logger.log(A2UILogLevel.WARN, "Surface not found: $surfaceId")
             return
+        }
+
+        val currentCount = componentMap.size
+        if (currentCount + components.size > MAX_COMPONENTS_PER_SURFACE) {
+            logger.log(A2UILogLevel.WARN, "Component limit exceeded for surface: $surfaceId")
+            throw IllegalStateException("Maximum component count ($MAX_COMPONENTS_PER_SURFACE) exceeded")
         }
 
         components.forEach { component ->
@@ -239,8 +255,10 @@ class A2UIRenderer(
         when (functionCall.call) {
             "openUrl" -> {
                 val url = functionCall.args["url"] as? String
-                if (url != null) {
+                if (url != null && ALLOWED_URL_SCHEMES.any { url.startsWith(it) }) {
                     _actionHandler.value?.openUrl(url)
+                } else {
+                    logger.log(A2UILogLevel.WARN, "Blocked unsafe URL scheme: $url")
                 }
             }
             "showToast" -> {
@@ -330,6 +348,11 @@ class A2UIRenderer(
     }
 
     companion object {
+        const val MAX_MESSAGE_SIZE = 1 * 1024 * 1024  // 1MB
+        const val MAX_COMPONENTS_PER_SURFACE = 1000
+        const val MAX_SURFACES = 50
+        val ALLOWED_URL_SCHEMES = setOf("https://", "http://", "mailto:", "tel:", "sms:")
+
         val Saver: Saver<A2UIRenderer, SavedRendererState> = Saver(
             save = { renderer -> renderer.saveState() },
             restore = { savedState ->
@@ -343,7 +366,8 @@ data class SurfaceContext(
     val surfaceId: String,
     val catalogId: String,
     val theme: Theme? = null,
-    val sendDataModel: Boolean = false
+    val sendDataModel: Boolean = false,
+    val renderDepth: Int = 0
 )
 
 interface ActionHandler {

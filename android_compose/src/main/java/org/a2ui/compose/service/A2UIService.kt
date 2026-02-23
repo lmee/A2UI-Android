@@ -97,23 +97,52 @@ fun A2UIProvider(
     }
 }
 
+/**
+ * A2UI 服务类，管理渲染器和传输层的生命周期
+ *
+ * 实现 AutoCloseable 接口，确保资源正确释放
+ *
+ * @param renderer A2UI 渲染器实例
+ * @param transport 传输层实例（可选）
+ */
 class A2UIService(
     private val renderer: A2UIRenderer = A2UIRenderer(),
     private var transport: A2UITransport? = null
-) {
+) : AutoCloseable {
     private val _isConnected = mutableStateOf(false)
     val isConnected: Boolean
         get() = _isConnected.value
 
     val rendererState = A2UIRendererState(renderer)
 
-    private val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main)
+    private val scope = kotlinx.coroutines.CoroutineScope(
+        kotlinx.coroutines.Dispatchers.Main + kotlinx.coroutines.SupervisorJob()
+    )
+
+    // ✅ 添加状态标志，防止关闭后继续使用
+    @Volatile
+    private var isClosed = false
 
     fun setTransport(t: A2UITransport?) {
+        // ✅ 检查是否已关闭
+        if (isClosed) {
+            throw IllegalStateException("Service is closed")
+        }
+
+        // ✅ 关闭旧的传输层
+        if (transport is AutoCloseable && transport !== t) {
+            (transport as AutoCloseable).close()
+        }
+
         transport = t
     }
 
     suspend fun connect() {
+        // ✅ 检查是否已关闭
+        if (isClosed) {
+            throw IllegalStateException("Service is closed")
+        }
+
         transport?.connect()
         transport?.messages?.collectLatest { message ->
             renderer.processMessage(message)
@@ -133,6 +162,11 @@ class A2UIService(
     }
 
     suspend fun sendAction(surfaceId: String, actionName: String, context: Map<String, Any>) {
+        // ✅ 检查是否已关闭
+        if (isClosed) {
+            throw IllegalStateException("Service is closed")
+        }
+
         val dataModel = if (renderer.getSurfaceContext(surfaceId)?.sendDataModel == true) {
             renderer.getDataModel(surfaceId)?.getDataSnapshot()
         } else null
@@ -148,9 +182,49 @@ class A2UIService(
         ))
     }
 
+    /**
+     * 释放所有资源（已废弃，请使用 close()）
+     */
+    @Deprecated(
+        message = "Use close() instead",
+        replaceWith = ReplaceWith("close()"),
+        level = DeprecationLevel.WARNING
+    )
     fun dispose() {
+        close()
+    }
+
+    /**
+     * 关闭服务并释放所有资源
+     *
+     * 此方法是幂等的，可以安全地多次调用
+     */
+    override fun close() {
+        if (isClosed) return
+
+        isClosed = true
+
+        // 1. 取消所有协程任务
         scope.cancel()
+
+        // 2. 关闭传输层
+        if (transport is AutoCloseable) {
+            (transport as AutoCloseable).close()
+        }
+        transport = null
+
+        // 3. 清理渲染器
         renderer.dispose()
+    }
+
+    /**
+     * 析构函数保护，防止忘记调用 close()
+     */
+    @Suppress("DEPRECATION")
+    protected fun finalize() {
+        if (!isClosed) {
+            close()
+        }
     }
 }
 
