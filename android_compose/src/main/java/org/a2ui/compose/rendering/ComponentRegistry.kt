@@ -42,15 +42,24 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import coil.compose.AsyncImage
 import org.a2ui.compose.data.*
 import org.a2ui.compose.theme.A2UITheme
 import org.a2ui.compose.theme.A2UIThemeConfig
 import org.a2ui.compose.theme.parseColor
+import org.a2ui.compose.validation.SafeRegexValidator
 
 class ComponentRegistry(private val renderer: A2UIRenderer) {
     private val components = mutableMapOf<String, @Composable (Component, SurfaceContext) -> Unit>()
     private var customComponents = mutableMapOf<String, @Composable (Component, SurfaceContext) -> Unit>()
+
+    companion object {
+        private const val MAX_RENDER_DEPTH = 50
+    }
 
     init {
         registerDefaultComponents()
@@ -70,9 +79,33 @@ class ComponentRegistry(private val renderer: A2UIRenderer) {
 
     @Composable
     fun render(component: Component, context: SurfaceContext) {
+        if (context.renderDepth > MAX_RENDER_DEPTH) {
+            renderDepthError(component)
+            return
+        }
         customComponents[component.component]?.invoke(component, context)
             ?: components[component.component]?.invoke(component, context)
             ?: renderDefault(component, context)
+    }
+
+    @Composable
+    private fun renderDepthError(component: Component) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(8.dp),
+            elevation = CardDefaults.cardElevation(),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.errorContainer
+            )
+        ) {
+            Box(modifier = Modifier.padding(16.dp)) {
+                Text(
+                    text = "Render depth limit exceeded: ${component.component}",
+                    color = MaterialTheme.colorScheme.onErrorContainer
+                )
+            }
+        }
     }
 
     private fun registerDefaultComponents() {
@@ -104,7 +137,7 @@ class ComponentRegistry(private val renderer: A2UIRenderer) {
         register("Button") { component, context ->
             val text = renderer.resolveValue(context.surfaceId, component.text) as? String ?: ""
             val variant = component.variant
-            val isEnabled = true
+            val isEnabled = renderer.resolveValue(context.surfaceId, component.value) as? Boolean ?: true
             val interactionSource = remember { MutableInteractionSource() }
 
             val buttonModifier = Modifier
@@ -168,11 +201,9 @@ class ComponentRegistry(private val renderer: A2UIRenderer) {
                 else -> Alignment.Top
             }
 
-            val modifier = if (component.weight != null) {
-                Modifier.weight(component.weight!!.toFloat()).fillMaxWidth()
-            } else {
-                Modifier.fillMaxWidth()
-            }
+            val modifier = component.weight?.let { w ->
+                Modifier.weight(w.toFloat()).fillMaxWidth()
+            } ?: Modifier.fillMaxWidth()
 
             Row(
                 modifier = modifier,
@@ -202,11 +233,9 @@ class ComponentRegistry(private val renderer: A2UIRenderer) {
                 else -> Alignment.Start
             }
 
-            val modifier = if (component.weight != null) {
-                Modifier.weight(component.weight!!.toFloat()).fillMaxWidth()
-            } else {
-                Modifier.fillMaxWidth()
-            }
+            val modifier = component.weight?.let { w ->
+                Modifier.weight(w.toFloat()).fillMaxWidth()
+            } ?: Modifier.fillMaxWidth()
 
             Column(
                 modifier = modifier,
@@ -227,6 +256,16 @@ class ComponentRegistry(private val renderer: A2UIRenderer) {
             val minLength = component.minLength
             val maxLength = component.maxLength
             val pattern = component.pattern
+
+            val keyboardType = when (variant) {
+                "email" -> KeyboardType.Email
+                "password" -> KeyboardType.Password
+                "number" -> KeyboardType.Number
+                "phone" -> KeyboardType.Phone
+                else -> KeyboardType.Text
+            }
+            val visualTransformation = if (variant == "password")
+                PasswordVisualTransformation() else VisualTransformation.None
 
             var text by rememberSaveable { mutableStateOf(value) }
             var isError by rememberSaveable { mutableStateOf(false) }
@@ -253,13 +292,9 @@ class ComponentRegistry(private val renderer: A2UIRenderer) {
                 }
 
                 if (pattern != null && input.isNotEmpty()) {
-                    try {
-                        if (!Regex(pattern).matches(input)) {
-                            return Pair(false, "Invalid format")
-                        }
-                    } catch (e: Exception) {
-                        // Invalid regex pattern, skip validation
-                    }
+                    val matched = SafeRegexValidator.safeMatchesBlocking(pattern, input)
+                    if (matched == false) return Pair(false, "Invalid format")
+                    if (matched == null) return Pair(false, "Invalid pattern")
                 }
 
                 checks?.forEach { check ->
@@ -288,11 +323,7 @@ class ComponentRegistry(private val renderer: A2UIRenderer) {
                         "regex" -> {
                             val regexPattern = check.args["pattern"] as? String ?: ""
                             if (input.isEmpty() || regexPattern.isEmpty()) true
-                            else try {
-                                Regex(regexPattern).matches(input)
-                            } catch (e: Exception) {
-                                true
-                            }
+                            else SafeRegexValidator.safeMatchesBlocking(regexPattern, input) ?: false
                         }
                         "numeric" -> {
                             input.toDoubleOrNull() != null
@@ -334,17 +365,19 @@ class ComponentRegistry(private val renderer: A2UIRenderer) {
                 placeholder = { Text(text = placeholder) },
                 isError = isError && hasBeenTouched,
                 supportingText = if (isError && hasBeenTouched) {
-                    { 
+                    {
                         Text(
                             text = errorMessage,
                             color = MaterialTheme.colorScheme.error,
                             modifier = Modifier.semantics {
                                 liveRegion = LiveRegionMode.Polite
                             }
-                        ) 
+                        )
                     }
                 } else null,
                 singleLine = isSingleLine,
+                keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
+                visualTransformation = visualTransformation,
                 modifier = Modifier
                     .fillMaxWidth()
                     .semantics {
@@ -416,7 +449,7 @@ class ComponentRegistry(private val renderer: A2UIRenderer) {
                 component.child?.let { childId ->
                     renderer.getComponent(context.surfaceId, childId)?.let {
                         Box(modifier = Modifier.padding(16.dp)) {
-                            render(it, context)
+                            render(it, context.copy(renderDepth = context.renderDepth + 1))
                         }
                     }
                 }
@@ -430,7 +463,7 @@ class ComponentRegistry(private val renderer: A2UIRenderer) {
                         modifier = Modifier.fillMaxSize(),
                         color = MaterialTheme.colorScheme.background
                     ) {
-                        render(it, context)
+                        render(it, context.copy(renderDepth = context.renderDepth + 1))
                     }
                 }
             }
@@ -721,7 +754,7 @@ class ComponentRegistry(private val renderer: A2UIRenderer) {
                             ) { index, item ->
                                 renderer.getComponent(context.surfaceId, templateId)?.let { template ->
                                     key(index) {
-                                        render(template, context)
+                                        render(template, context.copy(renderDepth = context.renderDepth + 1))
                                     }
                                 }
                             }
@@ -740,7 +773,7 @@ class ComponentRegistry(private val renderer: A2UIRenderer) {
                         ) { index, childId ->
                             renderer.getComponent(context.surfaceId, childId)?.let {
                                 key(childId) {
-                                    render(it, context)
+                                    render(it, context.copy(renderDepth = context.renderDepth + 1))
                                 }
                             }
                         }
@@ -767,11 +800,11 @@ class ComponentRegistry(private val renderer: A2UIRenderer) {
 
                 Box(modifier = Modifier.padding(16.dp)) {
                     val selectedTab = tabs.getOrNull(selectedTabIndex)
-                    selectedTab?.let { tab ->
-                        component.child?.let { childId ->
-                            renderer.getComponent(context.surfaceId, childId)?.let {
-                                render(it, context)
-                            }
+                    val childId = selectedTab?.value as? String
+                        ?: component.child
+                    childId?.let { id ->
+                        renderer.getComponent(context.surfaceId, id)?.let {
+                            render(it, context.copy(renderDepth = context.renderDepth + 1))
                         }
                     }
                 }
@@ -819,7 +852,7 @@ class ComponentRegistry(private val renderer: A2UIRenderer) {
                                 ) {
                                     component.child?.let { childId ->
                                         renderer.getComponent(context.surfaceId, childId)?.let {
-                                            render(it, context)
+                                            render(it, context.copy(renderDepth = context.renderDepth + 1))
                                         }
                                     }
                                     IconButton(onClick = { isVisible = false }) {
@@ -839,33 +872,47 @@ class ComponentRegistry(private val renderer: A2UIRenderer) {
         register("DateTimeInput") { component, context ->
             val label = renderer.resolveValue(context.surfaceId, component.label) as? String ?: ""
             val value = renderer.resolveValue(context.surfaceId, component.value) as? String ?: ""
+            val variant = component.variant  // "date" (default), "time", "datetime"
 
             var text by rememberSaveable { mutableStateOf(value) }
             var showDatePicker by rememberSaveable { mutableStateOf(false) }
+            var showTimePicker by rememberSaveable { mutableStateOf(false) }
+            var pendingDate by rememberSaveable { mutableStateOf("") }
+
+            val isTimeOnly = variant == "time"
+            val isDateTime = variant == "datetime"
+
+            fun commitValue(newValue: String) {
+                text = newValue
+                component.value?.let { dynamicValue ->
+                    if (dynamicValue is DynamicValue.PathValue) {
+                        renderer.updateDataModel(context.surfaceId, dynamicValue.path, newValue)
+                    }
+                }
+            }
+
+            val trailingIcon: @Composable () -> Unit = {
+                IconButton(onClick = {
+                    if (isTimeOnly) showTimePicker = true else showDatePicker = true
+                }) {
+                    Icon(
+                        imageVector = if (isTimeOnly) Icons.Default.Schedule else Icons.Default.DateRange,
+                        contentDescription = if (isTimeOnly) "Pick time" else "Pick date"
+                    )
+                }
+            }
 
             OutlinedTextField(
                 value = text,
-                onValueChange = { newValue ->
-                    text = newValue
-                    component.value?.let { dynamicValue ->
-                        if (dynamicValue is DynamicValue.PathValue) {
-                            renderer.updateDataModel(context.surfaceId, dynamicValue.path, newValue)
-                        }
-                    }
-                },
+                onValueChange = {},
                 label = { Text(text = label) },
                 modifier = Modifier.fillMaxWidth(),
                 readOnly = true,
-                trailingIcon = {
-                    IconButton(onClick = { showDatePicker = true }) {
-                        Icon(Icons.Default.DateRange, contentDescription = "Pick date")
-                    }
-                }
+                trailingIcon = trailingIcon
             )
 
             if (showDatePicker) {
                 val datePickerState = rememberDatePickerState()
-
                 DatePickerDialog(
                     onDismissRequest = { showDatePicker = false },
                     confirmButton = {
@@ -873,25 +920,52 @@ class ComponentRegistry(private val renderer: A2UIRenderer) {
                             datePickerState.selectedDateMillis?.let { millis ->
                                 val date = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
                                     .format(java.util.Date(millis))
-                                text = date
-                                component.value?.let { dynamicValue ->
-                                    if (dynamicValue is DynamicValue.PathValue) {
-                                        renderer.updateDataModel(context.surfaceId, dynamicValue.path, date)
-                                    }
+                                if (isDateTime) {
+                                    pendingDate = date
+                                    showDatePicker = false
+                                    showTimePicker = true
+                                } else {
+                                    commitValue(date)
+                                    showDatePicker = false
                                 }
                             }
-                            showDatePicker = false
-                        }) {
-                            Text("OK")
-                        }
+                        }) { Text("OK") }
                     },
                     dismissButton = {
-                        TextButton(onClick = { showDatePicker = false }) {
-                            Text("Cancel")
-                        }
+                        TextButton(onClick = { showDatePicker = false }) { Text("Cancel") }
                     }
                 ) {
                     DatePicker(state = datePickerState)
+                }
+            }
+
+            if (showTimePicker) {
+                val timePickerState = rememberTimePickerState()
+                androidx.compose.ui.window.Dialog(onDismissRequest = { showTimePicker = false }) {
+                    Card(shape = RoundedCornerShape(16.dp)) {
+                        Column(
+                            modifier = Modifier.padding(16.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            TimePicker(state = timePickerState)
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.End
+                            ) {
+                                TextButton(onClick = { showTimePicker = false }) { Text("Cancel") }
+                                TextButton(onClick = {
+                                    val time = String.format(
+                                        java.util.Locale.getDefault(),
+                                        "%02d:%02d",
+                                        timePickerState.hour,
+                                        timePickerState.minute
+                                    )
+                                    commitValue(if (isDateTime && pendingDate.isNotEmpty()) "$pendingDate $time" else time)
+                                    showTimePicker = false
+                                }) { Text("OK") }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -1030,7 +1104,7 @@ class ComponentRegistry(private val renderer: A2UIRenderer) {
             is ChildList.ArrayChildList -> {
                 children.array.forEach { childId ->
                     renderer.getComponent(context.surfaceId, childId)?.let {
-                        render(it, context)
+                        render(it, context.copy(renderDepth = context.renderDepth + 1))
                     }
                 }
             }
@@ -1048,7 +1122,7 @@ class ComponentRegistry(private val renderer: A2UIRenderer) {
         dataItems?.let { items ->
             items.forEachIndexed { index, _ ->
                 renderer.getComponent(context.surfaceId, template.componentId)?.let { templateComponent ->
-                    render(templateComponent, context)
+                    render(templateComponent, context.copy(renderDepth = context.renderDepth + 1))
                 }
             }
         }
@@ -1079,21 +1153,25 @@ private fun <T> DynamicValue(path: String): DynamicValue<T> {
     return DynamicValue.PathValue(path)
 }
 
+private val EMAIL_REGEX = "^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$"
+    .toRegex(RegexOption.IGNORE_CASE)
+private val URL_REGEX = "^(https?://)?([\\w.-]+)(\\.[\\w.-]+)+[/#?]?.*$"
+    .toRegex(RegexOption.IGNORE_CASE)
+private val PHONE_REGEX = "^[+]?[0-9]{10,15}$".toRegex()
+private val PHONE_CLEAN_REGEX = "[\\s-()]+".toRegex()
+
 private fun isValidEmail(email: String): Boolean {
     if (email.isBlank()) return false
-    val emailRegex = "^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$".toRegex(RegexOption.IGNORE_CASE)
-    return emailRegex.matches(email)
+    return EMAIL_REGEX.matches(email)
 }
 
 private fun isValidUrl(url: String): Boolean {
     if (url.isBlank()) return false
-    val urlRegex = "^(https?://)?([\\w.-]+)(\\.[\\w.-]+)+[/#?]?.*$".toRegex(RegexOption.IGNORE_CASE)
-    return urlRegex.matches(url)
+    return URL_REGEX.matches(url)
 }
 
 private fun isValidPhone(phone: String): Boolean {
     if (phone.isBlank()) return false
-    val phoneRegex = "^[+]?[0-9]{10,15}$".toRegex()
-    val cleanedPhone = phone.replace(Regex("[\\s-()]+"), "")
-    return phoneRegex.matches(cleanedPhone)
+    val cleanedPhone = phone.replace(PHONE_CLEAN_REGEX, "")
+    return PHONE_REGEX.matches(cleanedPhone)
 }

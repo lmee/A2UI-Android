@@ -2,9 +2,22 @@ package org.a2ui.compose.data
 
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.snapshots.SnapshotStateMap
+import org.a2ui.compose.validation.SafeRegexValidator
 
 class DataModelProcessor {
     private val surfaces = mutableMapOf<String, DataModelState>()
+
+    companion object {
+        private val EMAIL_REGEX = "^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$"
+            .toRegex(RegexOption.IGNORE_CASE)
+        private val URL_REGEX = "^(https?://)?([\\w.-]+)(\\.[\\w.-]+)+[/#?]?.*$"
+            .toRegex(RegexOption.IGNORE_CASE)
+        private val PHONE_REGEX = "^[+]?[0-9]{10,15}$".toRegex()
+        private val PHONE_CLEAN_REGEX = "[\\s-()]+".toRegex()
+        private val FORMAT_STRING_REGEX = """\$\{([^}]+)\}""".toRegex()
+        private val FUNC_ARGS_REGEX = """(\w+):\s*([^,]+)""".toRegex()
+        private const val MAX_PATH_DEPTH = 10
+    }
 
     fun createSurface(surfaceId: String) {
         if (!surfaces.containsKey(surfaceId)) {
@@ -61,11 +74,7 @@ class DataModelProcessor {
             "regex" -> {
                 val value = functionCall.args["value"] as? String ?: ""
                 val pattern = functionCall.args["pattern"] as? String ?: ""
-                try {
-                    Regex(pattern).matches(value)
-                } catch (e: Exception) {
-                    false
-                }
+                SafeRegexValidator.safeMatchesBlocking(pattern, value) ?: false
             }
             "numeric" -> {
                 val value = functionCall.args["value"]
@@ -122,28 +131,24 @@ class DataModelProcessor {
 
     private fun isValidEmail(email: String): Boolean {
         if (email.isBlank()) return false
-        val emailRegex = "^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$".toRegex(RegexOption.IGNORE_CASE)
-        return emailRegex.matches(email)
+        return EMAIL_REGEX.matches(email)
     }
 
     private fun isValidUrl(url: String): Boolean {
         if (url.isBlank()) return false
-        val urlRegex = "^(https?://)?([\\w.-]+)(\\.[\\w.-]+)+[/#?]?.*$".toRegex(RegexOption.IGNORE_CASE)
-        return urlRegex.matches(url)
+        return URL_REGEX.matches(url)
     }
 
     private fun isValidPhone(phone: String): Boolean {
         if (phone.isBlank()) return false
-        val phoneRegex = "^[+]?[0-9]{10,15}$".toRegex(RegexOption.IGNORE_CASE)
-        val cleanedPhone = phone.replace(Regex("[\\s-()]+"), "")
-        return phoneRegex.matches(cleanedPhone)
+        val cleanedPhone = phone.replace(PHONE_CLEAN_REGEX, "")
+        return PHONE_REGEX.matches(cleanedPhone)
     }
 
     private fun formatString(template: String, args: Map<String, Any>): String {
         var result = template
-        val pattern = """\$\{([^}]+)\}""".toRegex()
 
-        return result.replace(pattern) { matchResult ->
+        return result.replace(FORMAT_STRING_REGEX) { matchResult ->
             val expression = matchResult.groupValues[1]
             when {
                 expression.startsWith("/") -> {
@@ -166,6 +171,7 @@ class DataModelProcessor {
     private fun resolvePath(dataModel: Any, path: String): Any? {
         val cleanPath = path.removePrefix("/")
         val keys = cleanPath.split("/")
+        if (keys.size > MAX_PATH_DEPTH) return null
 
         var current: Any? = dataModel
         for (key in keys) {
@@ -186,9 +192,8 @@ class DataModelProcessor {
         if (argsStr.isBlank()) return emptyMap()
 
         val args = mutableMapOf<String, Any>()
-        val pattern = """(\w+):\s*([^,]+)""".toRegex()
 
-        pattern.findAll(argsStr).forEach { match ->
+        FUNC_ARGS_REGEX.findAll(argsStr).forEach { match ->
             val key = match.groupValues[1]
             val value = match.groupValues[2].trim()
             args[key] = value
