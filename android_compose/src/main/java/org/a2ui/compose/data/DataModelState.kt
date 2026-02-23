@@ -3,17 +3,25 @@ package org.a2ui.compose.data
 import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.snapshots.SnapshotStateMap
+import org.a2ui.compose.validation.PathValidator
 
 class DataModelState {
     private val _data = mutableStateMapOf<String, Any?>()
     val data: SnapshotStateMap<String, Any?> = _data
 
     fun updateDataModel(path: String, value: Any?) {
+        // ✅ 验证路径安全性
+        PathValidator.validatePathOrThrow(path)
+
         if (path == "/") {
             _data.clear()
             if (value is Map<*, *>) {
                 value.entries.forEach { (k, v) ->
-                    _data[k.toString()] = v
+                    val key = k.toString()
+                    // ✅ 验证每个键名
+                    if (PathValidator.isValidPath("/$key")) {
+                        _data[key] = v
+                    }
                 }
             }
         } else {
@@ -38,6 +46,11 @@ class DataModelState {
     }
 
     fun getValue(path: String): Any? {
+        // ✅ 验证路径安全性，无效路径返回 null
+        if (!PathValidator.isValidPath(path)) {
+            return null
+        }
+
         if (path == "/") {
             return _data
         }
