@@ -1,6 +1,8 @@
 package org.a2ui.compose.transport
 
 import kotlinx.coroutines.flow.Flow
+import okhttp3.OkHttpClient
+import java.util.concurrent.TimeUnit
 
 sealed class TransportState {
     object Disconnected : TransportState()
@@ -25,4 +27,14 @@ interface A2UIActionSender {
         context: Map<String, Any>,
         dataModel: Map<String, Any?>? = null
     )
+}
+
+object A2UIHttpClientFactory {
+    val sharedClient: OkHttpClient by lazy {
+        OkHttpClient.Builder()
+            .pingInterval(30, TimeUnit.SECONDS)
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .readTimeout(0, TimeUnit.MILLISECONDS)
+            .build()
+    }
 }

@@ -2,6 +2,7 @@ package org.a2ui.compose.error
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.Info
@@ -45,7 +46,10 @@ interface A2UIErrorHandler {
 
 class DefaultErrorHandler : A2UIErrorHandler {
     private val _errors = mutableStateListOf<ErrorInfo>()
-    val errors: List<ErrorInfo> get() = _errors.toList()
+
+    companion object {
+        const val MAX_ERROR_COUNT = 100
+    }
 
     override fun handleError(error: A2UIError, severity: ErrorSeverity) {
         val errorInfo = ErrorInfo(
@@ -54,6 +58,10 @@ class DefaultErrorHandler : A2UIErrorHandler {
             recoverable = isRecoverable(error),
             recoveryAction = getRecoveryAction(error)
         )
+        // ✅ FIFO 淘汰：超过上限时移除最旧的错误
+        while (_errors.size >= MAX_ERROR_COUNT) {
+            _errors.removeFirst()
+        }
         _errors.add(errorInfo)
     }
 

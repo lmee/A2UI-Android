@@ -41,6 +41,10 @@ class A2UISampleActivity : ComponentActivity() {
                 val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
                 startActivity(intent)
             }
+
+            override fun showToast(message: String) {
+                android.widget.Toast.makeText(this@A2UISampleActivity, message, android.widget.Toast.LENGTH_SHORT).show()
+            }
         }
 
         a2uiService.rendererState.renderer.setActionHandler(actionHandler)
@@ -65,7 +69,7 @@ class A2UISampleActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        a2uiService.dispose()
+        a2uiService.close()
     }
 
     private fun getSampleMessages(): List<String> {

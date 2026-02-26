@@ -1,6 +1,7 @@
 package org.a2ui.compose.data
 
 import androidx.compose.runtime.State
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.snapshots.SnapshotStateMap
 import org.a2ui.compose.validation.PathValidator
@@ -9,9 +10,21 @@ class DataModelState {
     private val _data = mutableStateMapOf<String, Any?>()
     val data: SnapshotStateMap<String, Any?> = _data
 
+    companion object {
+        const val MAX_ENTRIES = 10_000
+    }
+
     fun updateDataModel(path: String, value: Any?) {
         // ✅ 验证路径安全性
         PathValidator.validatePathOrThrow(path)
+
+        // ✅ 检查条目数上限
+        if (_data.size >= MAX_ENTRIES && path != "/") {
+            val keys = path.removePrefix("/").split("/")
+            if (!_data.containsKey(keys.first())) {
+                throw IllegalStateException("Data model entry limit ($MAX_ENTRIES) exceeded")
+            }
+        }
 
         if (path == "/") {
             _data.clear()
