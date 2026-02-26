@@ -19,7 +19,6 @@
         <item name="colorError">@color/error</item>
         <item name="colorOnError">@color/white</item>
         <!-- Other -->
-        <item name="android:fontFamily">@font/roboto</item>
         <item name="textAppearanceHeadlineLarge">@style/TextAppearance.Material3.HeadlineLarge</item>
         <item name="textAppearanceHeadlineMedium">@style/TextAppearance.Material3.HeadlineMedium</item>
         <item name="textAppearanceHeadlineSmall">@style/TextAppearance.Material3.HeadlineSmall</item>

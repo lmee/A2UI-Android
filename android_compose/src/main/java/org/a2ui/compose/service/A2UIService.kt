@@ -2,10 +2,13 @@ package org.a2ui.compose.service
 
 import androidx.compose.runtime.*
 import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.serialization.Contextual
 import org.a2ui.compose.data.*
 import org.a2ui.compose.rendering.*
 import org.a2ui.compose.transport.*
+import java.util.concurrent.atomic.AtomicBoolean
 
 @Composable
 fun rememberA2UIRenderer(
@@ -44,9 +47,7 @@ class A2UIRendererState(val renderer: A2UIRenderer) {
     @Composable
     fun renderSurface(surfaceId: String, modifier: androidx.compose.ui.Modifier = androidx.compose.ui.Modifier) {
         val composable = renderer.renderSurface(surfaceId)
-        androidx.compose.runtime.Composable {
-            composable()
-        }
+        composable()
     }
 
     fun getSurfaceContext(surfaceId: String): SurfaceContext? {
@@ -69,9 +70,8 @@ fun A2UISurface(
     rendererState: A2UIRendererState = LocalA2UIContext.current.rendererState
 ) {
     val context = rendererState.renderer.getSurfaceContext(surfaceId)
-    val rootComponent = remember(surfaceId) {
-        rendererState.renderer.getComponent(surfaceId, "root")
-    }
+    // ✅ 直接读取，利用 SnapshotStateMap 响应式更新（不用 remember 缓存）
+    val rootComponent = rendererState.renderer.getComponent(surfaceId, "root")
 
     if (context != null && rootComponent != null) {
         val registry = remember { ComponentRegistry(rendererState.renderer) }
@@ -119,13 +119,11 @@ class A2UIService(
         kotlinx.coroutines.Dispatchers.Main + kotlinx.coroutines.SupervisorJob()
     )
 
-    // ✅ 添加状态标志，防止关闭后继续使用
-    @Volatile
-    private var isClosed = false
+    // ✅ AtomicBoolean 防止并发关闭竞态
+    private val isClosed = AtomicBoolean(false)
 
     fun setTransport(t: A2UITransport?) {
-        // ✅ 检查是否已关闭
-        if (isClosed) {
+        if (isClosed.get()) {
             throw IllegalStateException("Service is closed")
         }
 
@@ -138,8 +136,7 @@ class A2UIService(
     }
 
     suspend fun connect() {
-        // ✅ 检查是否已关闭
-        if (isClosed) {
+        if (isClosed.get()) {
             throw IllegalStateException("Service is closed")
         }
 
@@ -162,8 +159,7 @@ class A2UIService(
     }
 
     suspend fun sendAction(surfaceId: String, actionName: String, context: Map<String, Any>) {
-        // ✅ 检查是否已关闭
-        if (isClosed) {
+        if (isClosed.get()) {
             throw IllegalStateException("Service is closed")
         }
 
@@ -172,7 +168,7 @@ class A2UIService(
         } else null
 
         transport?.send(kotlinx.serialization.json.Json.encodeToString(
-            org.a2ui.compose.data.ActionMessage.serializer(),
+            ActionMessage.serializer(),
             ActionMessage(
                 surfaceId = surfaceId,
                 actionName = actionName,
@@ -200,9 +196,7 @@ class A2UIService(
      * 此方法是幂等的，可以安全地多次调用
      */
     override fun close() {
-        if (isClosed) return
-
-        isClosed = true
+        if (!isClosed.compareAndSet(false, true)) return
 
         // 1. 取消所有协程任务
         scope.cancel()
@@ -216,22 +210,12 @@ class A2UIService(
         // 3. 清理渲染器
         renderer.dispose()
     }
-
-    /**
-     * 析构函数保护，防止忘记调用 close()
-     */
-    @Suppress("DEPRECATION")
-    protected fun finalize() {
-        if (!isClosed) {
-            close()
-        }
-    }
 }
 
 @kotlinx.serialization.Serializable
 data class ActionMessage(
     val surfaceId: String,
     val actionName: String,
-    val context: Map<String, Any>,
-    val dataModel: Map<String, Any?>? = null
+    val context: Map<String, @Contextual Any>,
+    val dataModel: Map<String, @Contextual Any?>? = null
 )

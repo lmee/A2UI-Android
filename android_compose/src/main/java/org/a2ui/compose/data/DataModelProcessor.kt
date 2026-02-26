@@ -3,9 +3,10 @@ package org.a2ui.compose.data
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.snapshots.SnapshotStateMap
 import org.a2ui.compose.validation.SafeRegexValidator
+import java.util.concurrent.ConcurrentHashMap
 
 class DataModelProcessor {
-    private val surfaces = mutableMapOf<String, DataModelState>()
+    private val surfaces = ConcurrentHashMap<String, DataModelState>()
 
     companion object {
         private val EMAIL_REGEX = "^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$"
@@ -17,6 +18,8 @@ class DataModelProcessor {
         private val FORMAT_STRING_REGEX = """\$\{([^}]+)\}""".toRegex()
         private val FUNC_ARGS_REGEX = """(\w+):\s*([^,]+)""".toRegex()
         private const val MAX_PATH_DEPTH = 10
+        private const val MAX_DATE_FORMAT_LENGTH = 64
+        private val SAFE_DATE_FORMAT_REGEX = """^[a-zA-Z0-9\s\-/:.,'+\[\]()]+$""".toRegex()
     }
 
     fun createSurface(surfaceId: String) {
@@ -48,11 +51,30 @@ class DataModelProcessor {
     }
 
     fun resolveDynamicValue(surfaceId: String, value: DynamicValue<*>?): Any? {
+        return resolveDynamicValueWithScope(surfaceId, value, null)
+    }
+
+    /**
+     * 带作用域的动态值解析（支持 Collection Scope）
+     *
+     * 当 scopePath 不为 null 时，相对路径（不以 / 开头）会在 scopePath 下解析。
+     * 例如 scopePath="/users/0"，相对路径 "name" 解析为 "/users/0/name"
+     */
+    fun resolveDynamicValueWithScope(surfaceId: String, value: DynamicValue<*>?, scopePath: String?): Any? {
         if (value == null) return null
 
         return when (value) {
             is DynamicValue.LiteralValue<*> -> value.literal
-            is DynamicValue.PathValue<*> -> getValue(surfaceId, value.path)
+            is DynamicValue.PathValue<*> -> {
+                val resolvedPath = if (scopePath != null && !value.path.startsWith("/")) {
+                    // 相对路径：在 scopePath 下解析
+                    "$scopePath/${value.path}"
+                } else {
+                    // 绝对路径：直接解析
+                    value.path
+                }
+                getValue(surfaceId, resolvedPath)
+            }
             is DynamicValue.FunctionValue<*> -> resolveFunctionCall(value.functionCall)
         }
     }
@@ -125,7 +147,109 @@ class DataModelProcessor {
                 val value = functionCall.args["value"] as? String ?: ""
                 isValidPhone(value)
             }
+            "formatNumber" -> {
+                val value = (functionCall.args["value"] as? Number)?.toDouble() ?: return null
+                val decimals = (functionCall.args["decimals"] as? Number)?.toInt()
+                val grouping = functionCall.args["grouping"] as? Boolean ?: true
+                formatNumber(value, decimals, grouping)
+            }
+            "formatCurrency" -> {
+                val value = (functionCall.args["value"] as? Number)?.toDouble() ?: return null
+                val currency = functionCall.args["currency"] as? String ?: "USD"
+                val decimals = (functionCall.args["decimals"] as? Number)?.toInt() ?: 2
+                val grouping = functionCall.args["grouping"] as? Boolean ?: true
+                formatCurrency(value, currency, decimals, grouping)
+            }
+            "formatDate" -> {
+                val value = functionCall.args["value"] as? String ?: return null
+                val format = functionCall.args["format"] as? String ?: "yyyy-MM-dd"
+                formatDate(value, format)
+            }
+            "pluralize" -> {
+                val value = (functionCall.args["value"] as? Number)?.toDouble() ?: return null
+                val zero = functionCall.args["zero"] as? String
+                val one = functionCall.args["one"] as? String
+                val two = functionCall.args["two"] as? String
+                val few = functionCall.args["few"] as? String
+                val many = functionCall.args["many"] as? String
+                val other = functionCall.args["other"] as? String ?: ""
+                pluralize(value, zero, one, two, few, many, other)
+            }
+            "openUrl" -> {
+                // openUrl is a side-effect function, handled by ActionHandler
+                functionCall.args["url"] as? String
+            }
             else -> null
+        }
+    }
+
+    private fun formatNumber(value: Double, decimals: Int?, grouping: Boolean): String {
+        val nf = java.text.NumberFormat.getNumberInstance()
+        if (decimals != null) {
+            nf.minimumFractionDigits = decimals
+            nf.maximumFractionDigits = decimals
+        }
+        nf.isGroupingUsed = grouping
+        return nf.format(value)
+    }
+
+    private fun formatCurrency(value: Double, currencyCode: String, decimals: Int, grouping: Boolean): String {
+        return try {
+            val nf = java.text.NumberFormat.getCurrencyInstance()
+            nf.currency = java.util.Currency.getInstance(currencyCode)
+            nf.minimumFractionDigits = decimals
+            nf.maximumFractionDigits = decimals
+            nf.isGroupingUsed = grouping
+            nf.format(value)
+        } catch (e: Exception) {
+            "$currencyCode ${formatNumber(value, decimals, grouping)}"
+        }
+    }
+
+    private fun formatDate(value: String, format: String): String {
+        // ✅ 校验 format 字符串长度和字符集
+        if (format.length > MAX_DATE_FORMAT_LENGTH || !SAFE_DATE_FORMAT_REGEX.matches(format)) {
+            return value
+        }
+
+        return try {
+            val inputFormats = listOf(
+                java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", java.util.Locale.getDefault()),
+                java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", java.util.Locale.getDefault()),
+                java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.getDefault()),
+                java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
+            )
+            var date: java.util.Date? = null
+            for (fmt in inputFormats) {
+                try {
+                    fmt.isLenient = false
+                    date = fmt.parse(value)
+                    if (date != null) break
+                } catch (_: Exception) {}
+            }
+            if (date == null) return value
+            val outputFormat = java.text.SimpleDateFormat(format, java.util.Locale.getDefault())
+            outputFormat.format(date)
+        } catch (e: Exception) {
+            value
+        }
+    }
+
+    /**
+     * CLDR 复数规则（简化版，覆盖英语等常见语言）
+     */
+    private fun pluralize(
+        value: Double, zero: String?, one: String?,
+        two: String?, few: String?, many: String?, other: String
+    ): String {
+        val intVal = value.toInt()
+        return when {
+            value == 0.0 && zero != null -> zero
+            value == 1.0 && one != null -> one
+            value == 2.0 && two != null -> two
+            intVal in 3..10 && few != null -> few
+            intVal > 10 && many != null -> many
+            else -> other
         }
     }
 

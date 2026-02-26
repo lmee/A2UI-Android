@@ -7,6 +7,9 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
 import kotlinx.coroutines.launch
 import org.a2ui.compose.rendering.*
 import org.a2ui.compose.service.A2UIService
@@ -253,3 +256,57 @@ object ResourceManagementBestPractices {
         // 忘记调用 close()，导致内存泄漏
     }
 }
+
+/**
+ * ✅ LifecycleObserver 模式示例（替代 finalize 反模式）
+ *
+ * 通过 LifecycleObserver 自动管理 A2UIService 生命周期，
+ * 无需依赖 finalize() 进行资源清理。
+ */
+class A2UILifecycleObserver(
+    private val url: String,
+    private val logger: A2UILogger = DefaultLogger()
+) : DefaultLifecycleObserver {
+
+    private var service: A2UIService? = null
+    private var transport: WebSocketTransport? = null
+
+    val currentService: A2UIService?
+        get() = service
+
+    override fun onCreate(owner: LifecycleOwner) {
+        val renderer = A2UIRenderer(logger)
+        transport = WebSocketTransport(url)
+        service = A2UIService(renderer, transport)
+    }
+
+    override fun onDestroy(owner: LifecycleOwner) {
+        // ✅ 自动清理，无需 finalize()
+        service?.close()
+        service = null
+        transport = null
+        owner.lifecycle.removeObserver(this)
+    }
+}
+
+/**
+ * 使用示例：
+ *
+ * ```kotlin
+ * class MyActivity : ComponentActivity() {
+ *     private val a2uiObserver = A2UILifecycleObserver("ws://example.com/a2ui")
+ *
+ *     override fun onCreate(savedInstanceState: Bundle?) {
+ *         super.onCreate(savedInstanceState)
+ *         lifecycle.addObserver(a2uiObserver)
+ *
+ *         setContent {
+ *             a2uiObserver.currentService?.let { service ->
+ *                 // 使用 service 渲染 UI
+ *             }
+ *         }
+ *     }
+ *     // 无需手动 onDestroy 清理 — LifecycleObserver 自动处理
+ * }
+ * ```
+ */

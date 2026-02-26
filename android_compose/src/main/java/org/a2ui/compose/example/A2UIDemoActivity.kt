@@ -323,6 +323,7 @@ private fun initializeListDemo(renderer: A2UIRenderer, surfaceId: String) {
 @Composable
 fun RenderSurface(renderer: A2UIRenderer, surfaceId: String) {
     val context = renderer.getSurfaceContext(surfaceId)
+    // ✅ 直接读取，利用 SnapshotStateMap 响应式更新
     val rootComponent = renderer.getComponent(surfaceId, "root")
 
     if (context != null && rootComponent != null) {
