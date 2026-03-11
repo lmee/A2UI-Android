@@ -54,6 +54,8 @@ import org.a2ui.compose.theme.glassmorphism
 import org.a2ui.compose.theme.getEnhancedCardColors
 import org.a2ui.compose.theme.getEnhancedCardElevation
 import org.a2ui.compose.theme.a2uiThemeConfig
+import org.a2ui.compose.animation.*
+import org.a2ui.compose.charts.*
 import org.a2ui.compose.validation.SafeRegexValidator
 import java.util.concurrent.ConcurrentHashMap
 
@@ -67,6 +69,7 @@ class ComponentRegistry(private val renderer: A2UIRenderer) {
 
     init {
         registerDefaultComponents()
+        registerChartComponents()
     }
 
     fun register(componentName: String, factory: @Composable (Component, SurfaceContext) -> Unit) {
@@ -136,7 +139,12 @@ class ComponentRegistry(private val renderer: A2UIRenderer) {
                 "label" -> MaterialTheme.typography.labelLarge
                 else -> MaterialTheme.typography.bodyLarge
             }
-            Text(text = text, style = textStyle, color = MaterialTheme.colorScheme.onSurface)
+            val themeConfig = a2uiThemeConfig()
+            AnimatedText(
+                text = text,
+                style = textStyle.copy(color = MaterialTheme.colorScheme.onSurface),
+                themeConfig = themeConfig
+            )
         }
 
         // ==================== Button ====================
@@ -146,6 +154,7 @@ class ComponentRegistry(private val renderer: A2UIRenderer) {
             val isPrimary = component.variant == "primary" || component.primary == true
             val isBorderless = component.variant == "borderless" || component.variant == "text"
             val isEnabled = (resolve(context, component.value) as? Boolean) ?: true
+            val themeConfig = a2uiThemeConfig()
 
             val buttonModifier = Modifier.fillMaxWidth().semantics { role = Role.Button }
 
@@ -162,13 +171,27 @@ class ComponentRegistry(private val renderer: A2UIRenderer) {
                     }
                 } else {
                     val text = resolve(context, component.text)?.toString().orEmpty()
-                    Text(text = text)
+                    AnimatedText(text = text, themeConfig = themeConfig)
                 }
             }
 
             when {
-                isBorderless -> TextButton(onClick = onClick, enabled = isEnabled, modifier = buttonModifier, content = buttonContent)
-                isPrimary -> Button(onClick = onClick, enabled = isEnabled, modifier = buttonModifier, content = buttonContent)
+                isBorderless -> {
+                    AnimatedButton(
+                        onClick = onClick,
+                        modifier = buttonModifier,
+                        themeConfig = themeConfig,
+                        content = buttonContent
+                    )
+                }
+                isPrimary -> {
+                    AnimatedButton(
+                        onClick = onClick,
+                        modifier = buttonModifier,
+                        themeConfig = themeConfig,
+                        content = buttonContent
+                    )
+                }
                 else -> OutlinedButton(onClick = onClick, enabled = isEnabled, modifier = buttonModifier, content = buttonContent)
             }
         }
@@ -323,16 +346,12 @@ class ComponentRegistry(private val renderer: A2UIRenderer) {
         // ==================== Card ====================
         register("Card") { component, context ->
             val themeConfig = a2uiThemeConfig()
-            val cardShape = RoundedCornerShape(themeConfig.borderRadius.dp)
 
-            Card(
+            AnimatedCard(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(8.dp)
-                    .glassmorphism(themeConfig, cardShape),
-                elevation = getEnhancedCardElevation(themeConfig),
-                colors = getEnhancedCardColors(themeConfig),
-                shape = cardShape
+                    .padding(8.dp),
+                themeConfig = themeConfig
             ) {
                 // ✅ 同时支持 child 和 children
                 val childId = component.child
@@ -357,7 +376,6 @@ class ComponentRegistry(private val renderer: A2UIRenderer) {
         // ==================== StockCard ====================
         register("StockCard") { component, context ->
             val themeConfig = a2uiThemeConfig()
-            val cardShape = RoundedCornerShape(16.dp)
 
             // 解析股票数据 - 使用text属性作为股票信息
             val stockInfo = resolve(context, component.text) as? String ?: "股票信息"
@@ -368,6 +386,8 @@ class ComponentRegistry(private val renderer: A2UIRenderer) {
             var price = "0.00"
             var change = "0.00%"
             var volume = "0"
+            var priceValue = 0f
+            var changeValue = 0f
 
             lines.forEach { line ->
                 when {
@@ -376,9 +396,11 @@ class ComponentRegistry(private val renderer: A2UIRenderer) {
                     }
                     line.contains("价格") || line.contains("Price") -> {
                         price = line.substringAfter(":").trim()
+                        priceValue = price.replace("[^\\d.]".toRegex(), "").toFloatOrNull() ?: 0f
                     }
                     line.contains("涨跌") || line.contains("Change") -> {
                         change = line.substringAfter(":").trim()
+                        changeValue = change.replace("[^\\d.-]".toRegex(), "").toFloatOrNull() ?: 0f
                     }
                     line.contains("成交量") || line.contains("Volume") -> {
                         volume = line.substringAfter(":").trim()
@@ -388,14 +410,11 @@ class ComponentRegistry(private val renderer: A2UIRenderer) {
 
             val isPositive = !change.startsWith("-")
 
-            Card(
+            AnimatedCard(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(8.dp)
-                    .glassmorphism(themeConfig.copy(enableGlassmorphism = true), cardShape),
-                elevation = getEnhancedCardElevation(themeConfig.copy(cardElevation = 12)),
-                colors = getEnhancedCardColors(themeConfig.copy(enableGlassmorphism = true)),
-                shape = cardShape
+                    .padding(8.dp),
+                themeConfig = themeConfig.copy(enableGlassmorphism = true, cardElevation = 12)
             ) {
                 Column(
                     modifier = Modifier.padding(16.dp),
@@ -407,10 +426,10 @@ class ComponentRegistry(private val renderer: A2UIRenderer) {
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
+                        AnimatedText(
                             text = symbol,
                             style = MaterialTheme.typography.headlineSmall,
-                            color = MaterialTheme.colorScheme.onSurface
+                            themeConfig = themeConfig
                         )
                         Icon(
                             imageVector = if (isPositive) Icons.Default.TrendingUp else Icons.Default.TrendingDown,
@@ -425,15 +444,18 @@ class ComponentRegistry(private val renderer: A2UIRenderer) {
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.Bottom
                     ) {
-                        Text(
-                            text = price,
+                        AnimatedNumber(
+                            targetValue = priceValue,
                             style = MaterialTheme.typography.headlineMedium,
-                            color = MaterialTheme.colorScheme.onSurface
+                            themeConfig = themeConfig,
+                            formatter = { "%.2f".format(it) }
                         )
-                        Text(
+                        AnimatedText(
                             text = change,
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = if (isPositive) Color(0xFF4CAF50) else Color(0xFFF44336)
+                            style = MaterialTheme.typography.bodyLarge.copy(
+                                color = if (isPositive) Color(0xFF4CAF50) else Color(0xFFF44336)
+                            ),
+                            themeConfig = themeConfig
                         )
                     }
 
@@ -444,25 +466,25 @@ class ComponentRegistry(private val renderer: A2UIRenderer) {
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(
+                            AnimatedText(
                                 text = "成交量",
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                themeConfig = themeConfig
                             )
-                            Text(
+                            AnimatedText(
                                 text = volume,
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurface
+                                themeConfig = themeConfig
                             )
                         }
                     }
 
                     // 如果无法解析，显示原始文本
                     if (symbol == "N/A" && price == "0.00") {
-                        Text(
+                        AnimatedText(
                             text = stockInfo,
                             style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurface
+                            themeConfig = themeConfig
                         )
                     }
                 }
@@ -1177,4 +1199,224 @@ private val EMAIL_REGEX = "^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$".toR
 private fun isValidEmail(email: String): Boolean {
     if (email.isBlank()) return false
     return EMAIL_REGEX.matches(email)
+}
+
+/**
+ * 注册图表组件
+ */
+private fun ComponentRegistry.registerChartComponents() {
+    // ==================== CandlestickChart ====================
+    register("CandlestickChart") { component, context ->
+        val themeConfig = a2uiThemeConfig()
+
+        // 解析K线数据
+        val chartDataText = resolve(context, component.text) as? String ?: ""
+        val candles = parseStockData(chartDataText)
+
+        val candlestickData = ChartData.CandlestickData(
+            candles = candles,
+            timeLabels = generateTimeLabels(candles.size)
+        )
+
+        StockCandlestickChart(
+            data = candlestickData,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(300.dp)
+                .padding(8.dp),
+            config = ChartConfig(
+                animationEnabled = themeConfig.enableAnimations,
+                animationDuration = themeConfig.animationDuration
+            ),
+            themeConfig = themeConfig
+        )
+    }
+
+    // ==================== LineChart ====================
+    register("LineChart") { component, context ->
+        val themeConfig = a2uiThemeConfig()
+
+        // 解析折线图数据
+        val chartDataText = resolve(context, component.text) as? String ?: ""
+        val series = parseLineData(chartDataText)
+
+        val lineData = ChartData.LineData(
+            series = series,
+            xLabels = generateXLabels(series.firstOrNull()?.values?.size ?: 0)
+        )
+
+        RealTimeLineChart(
+            data = lineData,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(250.dp)
+                .padding(8.dp),
+            config = ChartConfig(
+                animationEnabled = themeConfig.enableAnimations,
+                animationDuration = themeConfig.animationDuration
+            ),
+            themeConfig = themeConfig
+        )
+    }
+
+    // ==================== GaugeChart ====================
+    register("GaugeChart") { component, context ->
+        val themeConfig = a2uiThemeConfig()
+
+        // 解析仪表盘数据
+        val gaugeText = resolve(context, component.text) as? String ?: "50"
+        val value = gaugeText.toFloatOrNull() ?: 50f
+        val maxValue = component.variant?.toFloatOrNull() ?: 100f
+
+        val gaugeData = ChartData.GaugeData(
+            value = value,
+            maxValue = maxValue,
+            ranges = listOf(
+                GaugeRange(0f, 30f, Color(0xFF4CAF50), "良好"),
+                GaugeRange(30f, 70f, Color(0xFFFF9800), "一般"),
+                GaugeRange(70f, 100f, Color(0xFFF44336), "警告")
+            ),
+            unit = "%"
+        )
+
+        GaugeChart(
+            data = gaugeData,
+            modifier = Modifier.padding(8.dp),
+            config = ChartConfig(
+                animationEnabled = themeConfig.enableAnimations
+            ),
+            themeConfig = themeConfig
+        )
+    }
+
+    // ==================== MiniGauge ====================
+    register("MiniGauge") { component, context ->
+        val themeConfig = a2uiThemeConfig()
+
+        val value = (resolve(context, component.text) as? String)?.toFloatOrNull() ?: 50f
+        val maxValue = component.variant?.toFloatOrNull() ?: 100f
+        val color = component.usageHint?.let { parseColor(it) } ?: Color.Blue
+
+        MiniGauge(
+            value = value,
+            maxValue = maxValue,
+            color = color,
+            modifier = Modifier.padding(4.dp),
+            themeConfig = themeConfig
+        )
+    }
+}
+
+/**
+ * 解析股票K线数据
+ */
+private fun parseStockData(dataText: String): List<CandleData> {
+    if (dataText.isBlank()) {
+        // 生成示例数据
+        return generateSampleCandleData()
+    }
+
+    val lines = dataText.split("\n").filter { it.isNotBlank() }
+    return lines.mapNotNull { line ->
+        val parts = line.split(",")
+        if (parts.size >= 5) {
+            try {
+                CandleData(
+                    timestamp = System.currentTimeMillis(),
+                    open = parts[1].toFloat(),
+                    high = parts[2].toFloat(),
+                    low = parts[3].toFloat(),
+                    close = parts[4].toFloat(),
+                    volume = if (parts.size > 5) parts[5].toFloat() else 0f
+                )
+            } catch (e: Exception) {
+                null
+            }
+        } else null
+    }.ifEmpty { generateSampleCandleData() }
+}
+
+/**
+ * 解析折线图数据
+ */
+private fun parseLineData(dataText: String): List<DataSeries> {
+    if (dataText.isBlank()) {
+        return listOf(generateSampleLineSeries())
+    }
+
+    val lines = dataText.split("\n").filter { it.isNotBlank() }
+    val values = lines.mapNotNull { it.toFloatOrNull() }
+
+    return if (values.isNotEmpty()) {
+        listOf(
+            DataSeries(
+                name = "数据",
+                values = values,
+                color = Color(0xFF2196F3),
+                fillArea = true,
+                showPoints = true
+            )
+        )
+    } else {
+        listOf(generateSampleLineSeries())
+    }
+}
+
+/**
+ * 生成示例K线数据
+ */
+private fun generateSampleCandleData(): List<CandleData> {
+    var price = 100f
+    return (0..19).map { i ->
+        val open = price
+        val change = (-5f..5f).random()
+        val close = open + change
+        val high = maxOf(open, close) + (0f..3f).random()
+        val low = minOf(open, close) - (0f..3f).random()
+        price = close
+
+        CandleData(
+            timestamp = System.currentTimeMillis() + i * 86400000L,
+            open = open,
+            high = high,
+            low = low,
+            close = close,
+            volume = (1000f..10000f).random()
+        )
+    }
+}
+
+/**
+ * 生成示例折线数据
+ */
+private fun generateSampleLineSeries(): DataSeries {
+    val values = (0..19).map { i ->
+        50f + kotlin.math.sin(i * 0.3) * 20f + (-5f..5f).random()
+    }
+
+    return DataSeries(
+        name = "示例数据",
+        values = values,
+        color = Color(0xFF4CAF50),
+        fillArea = true,
+        showPoints = true
+    )
+}
+
+/**
+ * 生成时间标签
+ */
+private fun generateTimeLabels(count: Int): List<String> {
+    return (0 until count).map { i ->
+        "Day ${i + 1}"
+    }
+}
+
+/**
+ * 生成X轴标签
+ */
+private fun generateXLabels(count: Int): List<String> {
+    return (0 until count).map { i ->
+        "${i + 1}"
+    }
 }

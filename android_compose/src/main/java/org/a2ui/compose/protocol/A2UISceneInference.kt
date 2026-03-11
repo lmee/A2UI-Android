@@ -17,6 +17,11 @@ enum class A2UIDynamicScene(
     // 新增股票和金融场景
     STOCK("股票信息卡片", "毛玻璃卡片 + 实时数据指标"),
     FINANCIAL("金融数据面板", "立体卡片组合 + 趋势图表"),
+    // 新增图表和分析场景
+    CHART("数据图表", "动态图表组件 + 实时动画"),
+    GAUGE("仪表盘指标", "圆形仪表盘 + 范围指示"),
+    ANALYTICS("数据分析面板", "多图表组合 + 交互式展示"),
+    CANDLESTICK("K线图表", "股票K线图 + 技术指标"),
 }
 
 data class A2UISceneHint(
@@ -223,6 +228,102 @@ object A2UISceneInference {
                     "interest_rate",
                 ),
             reason = "工具结果包含投资组合、资产负债、收益损失等综合金融数据。",
+        )
+
+        // 新增图表场景推理
+        maybeAddHint(
+            hints = hints,
+            scene = A2UIDynamicScene.CHART,
+            matched = normalizedToolName.contains("chart") ||
+                normalizedToolName.contains("graph") ||
+                normalizedToolName.contains("plot") ||
+                normalizedToolName.contains("trend") ||
+                keySet.intersects(
+                    "data_points",
+                    "series",
+                    "values",
+                    "x_axis",
+                    "y_axis",
+                    "labels",
+                    "dataset",
+                    "time_series",
+                    "trend_data",
+                    "line_data",
+                    "bar_data",
+                    "chart_data",
+                ),
+            reason = "工具结果包含数据点、系列、轴标签等图表相关数据。",
+        )
+
+        // 新增仪表盘场景推理
+        maybeAddHint(
+            hints = hints,
+            scene = A2UIDynamicScene.GAUGE,
+            matched = normalizedToolName.contains("gauge") ||
+                normalizedToolName.contains("meter") ||
+                normalizedToolName.contains("indicator") ||
+                normalizedToolName.contains("progress") ||
+                keySet.intersects(
+                    "percentage",
+                    "progress",
+                    "completion",
+                    "score",
+                    "rating",
+                    "level",
+                    "status",
+                    "health",
+                    "performance",
+                    "efficiency",
+                    "utilization",
+                    "capacity",
+                ),
+            reason = "工具结果包含百分比、进度、评分等适合仪表盘显示的指标数据。",
+        )
+
+        // 新增K线图场景推理
+        maybeAddHint(
+            hints = hints,
+            scene = A2UIDynamicScene.CANDLESTICK,
+            matched = normalizedToolName.contains("candlestick") ||
+                normalizedToolName.contains("ohlc") ||
+                normalizedToolName.contains("kline") ||
+                keySet.intersects(
+                    "open",
+                    "high",
+                    "low",
+                    "close",
+                    "ohlc",
+                    "candle",
+                    "kline_data",
+                    "trading_data",
+                    "price_history",
+                ),
+            reason = "工具结果包含开高低收价格数据，适合K线图展示。",
+        )
+
+        // 新增数据分析场景推理
+        maybeAddHint(
+            hints = hints,
+            scene = A2UIDynamicScene.ANALYTICS,
+            matched = normalizedToolName.contains("analytics") ||
+                normalizedToolName.contains("analysis") ||
+                normalizedToolName.contains("statistics") ||
+                normalizedToolName.contains("metrics") ||
+                keySet.intersects(
+                    "metrics",
+                    "statistics",
+                    "analysis",
+                    "insights",
+                    "summary",
+                    "breakdown",
+                    "distribution",
+                    "correlation",
+                    "comparison",
+                    "performance_metrics",
+                    "kpi",
+                    "dashboard_data",
+                ),
+            reason = "工具结果包含分析指标、统计数据等适合综合分析面板展示。",
         )
     }
 
