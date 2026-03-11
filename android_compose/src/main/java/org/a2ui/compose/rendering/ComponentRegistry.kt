@@ -31,6 +31,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -77,6 +82,7 @@ class ComponentRegistry(private val renderer: A2UIRenderer) {
     init {
         registerDefaultComponents()
         registerChartComponents()
+        // registerAIComponents() // 暂时禁用AI组件，等待后续完善
     }
 
     fun register(componentName: String, factory: @Composable (Component, SurfaceContext) -> Unit) {
@@ -1785,4 +1791,11 @@ private fun generateSampleBubbleData(): BubbleData {
         yRange = 0f to 100f,
         sizeRange = 10f to 35f
     )
+}
+
+/**
+ * 注册AI组件 - 暂时禁用，等待后续完善
+ */
+private fun ComponentRegistry.registerAIComponents() {
+    // TODO: 实现AI组件注册
 }
