@@ -46,64 +46,64 @@ class DataModelProcessorTest {
     @Test
     fun testResolveFunctionCall_required() {
         val functionCall = FunctionCall("required", mapOf("value" to ""))
-        assertFalse(processor.resolveDynamicValue("test_surface", DynamicValue.FunctionValue(functionCall)) as Boolean)
+        assertFalse(processor.resolveDynamicValue("test_surface", DynamicValue.FunctionValue<Boolean>(functionCall)) as Boolean)
 
         val functionCall2 = FunctionCall("required", mapOf("value" to "test"))
-        assertTrue(processor.resolveDynamicValue("test_surface", DynamicValue.FunctionValue(functionCall2)) as Boolean)
+        assertTrue(processor.resolveDynamicValue("test_surface", DynamicValue.FunctionValue<Boolean>(functionCall2)) as Boolean)
     }
 
     @Test
     fun testResolveFunctionCall_email() {
         val validEmail = FunctionCall("email", mapOf("value" to "test@example.com"))
-        assertTrue(processor.resolveDynamicValue("test_surface", DynamicValue.FunctionValue(validEmail)) as Boolean)
+        assertTrue(processor.resolveDynamicValue("test_surface", DynamicValue.FunctionValue<Boolean>(validEmail)) as Boolean)
 
         val invalidEmail = FunctionCall("email", mapOf("value" to "invalid-email"))
-        assertFalse(processor.resolveDynamicValue("test_surface", DynamicValue.FunctionValue(invalidEmail)) as Boolean)
+        assertFalse(processor.resolveDynamicValue("test_surface", DynamicValue.FunctionValue<Boolean>(invalidEmail)) as Boolean)
     }
 
     @Test
     fun testResolveFunctionCall_url() {
         val validUrl = FunctionCall("url", mapOf("value" to "https://example.com"))
-        assertTrue(processor.resolveDynamicValue("test_surface", DynamicValue.FunctionValue(validUrl)) as Boolean)
+        assertTrue(processor.resolveDynamicValue("test_surface", DynamicValue.FunctionValue<Boolean>(validUrl)) as Boolean)
 
         val invalidUrl = FunctionCall("url", mapOf("value" to "not-a-url"))
-        assertFalse(processor.resolveDynamicValue("test_surface", DynamicValue.FunctionValue(invalidUrl)) as Boolean)
+        assertFalse(processor.resolveDynamicValue("test_surface", DynamicValue.FunctionValue<Boolean>(invalidUrl)) as Boolean)
     }
 
     @Test
     fun testResolveFunctionCall_phone() {
         val validPhone = FunctionCall("phone", mapOf("value" to "1234567890"))
-        assertTrue(processor.resolveDynamicValue("test_surface", DynamicValue.FunctionValue(validPhone)) as Boolean)
+        assertTrue(processor.resolveDynamicValue("test_surface", DynamicValue.FunctionValue<Boolean>(validPhone)) as Boolean)
 
         val invalidPhone = FunctionCall("phone", mapOf("value" to "123"))
-        assertFalse(processor.resolveDynamicValue("test_surface", DynamicValue.FunctionValue(invalidPhone)) as Boolean)
+        assertFalse(processor.resolveDynamicValue("test_surface", DynamicValue.FunctionValue<Boolean>(invalidPhone)) as Boolean)
     }
 
     @Test
     fun testResolveFunctionCall_length() {
         val validLength = FunctionCall("length", mapOf("value" to "hello", "min" to 1, "max" to 10))
-        assertTrue(processor.resolveDynamicValue("test_surface", DynamicValue.FunctionValue(validLength)) as Boolean)
+        assertTrue(processor.resolveDynamicValue("test_surface", DynamicValue.FunctionValue<Boolean>(validLength)) as Boolean)
 
         val invalidLength = FunctionCall("length", mapOf("value" to "hello world this is too long", "max" to 10))
-        assertFalse(processor.resolveDynamicValue("test_surface", DynamicValue.FunctionValue(invalidLength)) as Boolean)
+        assertFalse(processor.resolveDynamicValue("test_surface", DynamicValue.FunctionValue<Boolean>(invalidLength)) as Boolean)
     }
 
     @Test
     fun testResolveFunctionCall_and() {
         val allTrue = FunctionCall("and", mapOf("values" to listOf(true, true, true)))
-        assertTrue(processor.resolveDynamicValue("test_surface", DynamicValue.FunctionValue(allTrue)) as Boolean)
+        assertTrue(processor.resolveDynamicValue("test_surface", DynamicValue.FunctionValue<Boolean>(allTrue)) as Boolean)
 
         val someFalse = FunctionCall("and", mapOf("values" to listOf(true, false, true)))
-        assertFalse(processor.resolveDynamicValue("test_surface", DynamicValue.FunctionValue(someFalse)) as Boolean)
+        assertFalse(processor.resolveDynamicValue("test_surface", DynamicValue.FunctionValue<Boolean>(someFalse)) as Boolean)
     }
 
     @Test
     fun testResolveFunctionCall_or() {
         val someTrue = FunctionCall("or", mapOf("values" to listOf(false, true, false)))
-        assertTrue(processor.resolveDynamicValue("test_surface", DynamicValue.FunctionValue(someTrue)) as Boolean)
+        assertTrue(processor.resolveDynamicValue("test_surface", DynamicValue.FunctionValue<Boolean>(someTrue)) as Boolean)
 
         val allFalse = FunctionCall("or", mapOf("values" to listOf(false, false, false)))
-        assertFalse(processor.resolveDynamicValue("test_surface", DynamicValue.FunctionValue(allFalse)) as Boolean)
+        assertFalse(processor.resolveDynamicValue("test_surface", DynamicValue.FunctionValue<Boolean>(allFalse)) as Boolean)
     }
 
     @Test
